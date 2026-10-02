@@ -1,5 +1,5 @@
 import AppError from "../utils/AppError.js";
-import {createUser,getUsers,getUserById} from "../services/user.service.js";
+import {createUser,getUsers,getUserById,updateUser,deleteUser} from "../services/user.service.js";
 
 
 export async function getUsersController(req,res){
@@ -34,4 +34,28 @@ export async function getUserByIdController(req,res,next){
     catch (error){
         next(error);
     }
+}
+export async function updateUserController(req,res,next){
+    try{
+        const userId = req.params.id ;
+        const userdata = req.body ;
+        const updatedUser = await updateUser(userId,userdata)
+        res.status(200).json({
+            data : updatedUser
+        })
+    }
+    catch (error){
+        next(error);
+    }
+}
+export async function deleteUserController(req,res,next){
+    try{
+        const result = await deleteUser(req.params.id);
+        if(!result){
+            throw new AppError("user not found",404);
+        }res.status(200).json({data: result});
+    }catch(error){
+        next(error);
+    }
+
 }

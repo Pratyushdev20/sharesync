@@ -3,7 +3,8 @@ import logger from "./middleware/logger.js"
 import errorHandler from "./middleware/errorHandler.js"
 import healthRouter from "./routes/health.routes.js"
 import testRouter from "./routes/test.routes.js";
-import userRouter from "./routes/user.routes.js"
+import userRouter from "./routes/user.routes.js";
+import authRouter from "./routes/auth.routes.js";
 
 
 
@@ -18,9 +19,11 @@ app.get("/error",(req,res)=>{
     next(error);
 }); 
 
-app.use("/api/health",healthRouter)
-app.use("/api/test",testRouter)
+app.use("/api/health",healthRouter);
+app.use("/api/test",testRouter);
 app.use("/users",userRouter);
+app.use("/auth",authRouter);
+
     
 
 

@@ -12,7 +12,7 @@
 | 1 | Firebase email/password login | ✅ `app/index.tsx` | — | `signInWithEmailAndPassword`; obtains Firebase ID token |
 | 2 | Verified Backend Login API | ✅ `app/index.tsx` | ✅ `POST /api/auth/login` | Accepts Firebase ID token via Bearer header or body, verifies with Firebase Admin SDK, extracts UID, fetches PostgreSQL user |
 | 3 | Auth token verification route | — | ✅ `GET /auth`, `GET /api/auth` | Uses `authMiddleware` to verify Firebase Bearer token |
-| 4 | User CRUD API | — | ✅ `/users` routes | `GET`, `POST`, `GET /:id`, `PATCH /:id`, `DELETE /:id` |
+| 4 | Secure User CRUD API | — | ✅ `/users`, `/api/users` routes | Protected by `authMiddleware`; strict ownership enforcement via `req.user.uid`; zero `password_hash` exposure; proper 401/403/404 |
 | 5 | Health check endpoint | — | ✅ `GET /api/health` | Static response via `health.service.js` |
 | 6 | Test echo endpoint | — | ✅ `POST /api/test/users` | Returns `req.body` back |
 | 7 | Firebase Admin SDK initialization on boot | — | ✅ `src/app.js`, `config/firebase.js` | Initialized at application startup; null-safe private key parsing |
@@ -22,7 +22,7 @@
 | 11 | Request logger middleware | — | ✅ `middleware/logger.js` | Logs `[METHOD] /path` to console |
 | 12 | Standardized error handler | — | ✅ `middleware/errorHandler.js` | Central JSON error responses with `success: false` and HTTP status |
 | 13 | Custom AppError class | — | ✅ `utils/AppError.js` | `extends Error` with `statusCode`/`statuscode` and `isOperational` |
-| 14 | User service layer | — | ✅ `services/user.service.js` | Data-access for `users` table including `getUserByFirebaseUid` |
+| 14 | Secure User service layer | — | ✅ `services/user.service.js` | Data-access for `users` table without `password_hash` leaks; ownership queries |
 | 15 | Firebase client SDK init | ✅ `config/firebase.js` | — | Uses `EXPO_PUBLIC_FIREBASE_*` env vars; exports `auth` |
 | 16 | Theme system (light/dark) | ✅ `constants/theme.ts` | — | `Colors`, `Fonts`, `Spacing`, `BottomTabInset`, `MaxContentWidth` |
 | 17 | Color scheme hooks | ✅ hooks | — | `useColorScheme` (native + web hydration-safe), `useTheme` |
@@ -43,16 +43,15 @@
 | 4 | **Auth guard / protected routes** | 🔴 High | No `onAuthStateChanged` listener; no route guard for main tabs |
 | 5 | **User registration (client & backend sync)**| 🔴 High | Need sign-up screen and backend user provisioning |
 | 6 | **Password hashing** | 🔴 High | `createUser` stores raw `password_hash` — needs bcrypt/argon2 |
-| 7 | **Auth on user CRUD routes** | 🔴 High | `/users` endpoints are public — needs `authMiddleware` guard |
-| 8 | **Google sign-in** | 🟡 Medium | Not started |
-| 9 | **Profile screen** | 🟡 Medium | No profile view/edit screen in client |
-| 10 | **Folder management** | 🟡 Medium | `folder.controller.js`, `folder.routes.js`, `folder.service.js` are 0-byte stubs |
-| 11 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
-| 12 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
-| 13 | **Home screen content** | 🟡 Medium | Needs actual home dashboard rather than login test screen |
-| 14 | **Push notifications** | 🔵 Low | Not started |
-| 15 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
-| 16 | **Structured logging** | 🔵 Low | Only `console.log/error` |
+| 7 | **Google sign-in** | 🟡 Medium | Not started |
+| 8 | **Profile screen** | 🟡 Medium | No profile view/edit screen in client |
+| 9 | **Folder management** | 🟡 Medium | `folder.controller.js`, `folder.routes.js`, `folder.service.js` are 0-byte stubs |
+| 10 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
+| 11 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
+| 12 | **Home screen content** | 🟡 Medium | Needs actual home dashboard rather than login test screen |
+| 13 | **Push notifications** | 🔵 Low | Not started |
+| 14 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
+| 15 | **Structured logging** | 🔵 Low | Only `console.log/error` |
 
 ---
 
@@ -117,7 +116,7 @@
 | File | Path | Endpoints |
 |------|------|-----------|
 | Auth routes | `server/src/routes/auth.routes.js` | `POST /api/auth/login`, `GET /api/auth` (and `/auth` aliases) |
-| User routes | `server/src/routes/user.routes.js` | `GET /users/`, `POST /users/`, `GET /users/:id`, `PATCH /users/:id`, `DELETE /users/:id` |
+| User routes | `server/src/routes/user.routes.js` | `GET /api/users/`, `POST /api/users/`, `GET /api/users/:id`, `PATCH /api/users/:id`, `DELETE /api/users/:id` (all protected by `authMiddleware`) |
 | Health routes | `server/src/routes/health.routes.js` | `GET /api/health/` |
 | Test routes | `server/src/routes/test.routes.js` | `POST /api/test/users` |
 | Folder routes | `server/src/routes/folder.routes.js` | ⚠️ Empty file (0 bytes) |
@@ -127,11 +126,11 @@
 | Function | Path | Purpose |
 |----------|------|---------|
 | `loginController` | `server/src/controllers/auth.controller.js` | Authenticates verified UID from Firebase token, fetches PostgreSQL user |
-| `getUsersController` | `server/src/controllers/user.controller.js` | List all users |
-| `createUserController` | `server/src/controllers/user.controller.js` | Create user |
-| `getUserByIdController` | `server/src/controllers/user.controller.js` | Get user by ID (with 404 check) |
-| `updateUserController` | `server/src/controllers/user.controller.js` | Update user name/email (⚠️ no 404 check) |
-| `deleteUserController` | `server/src/controllers/user.controller.js` | Delete user (with 404 check) |
+| `getUsersController` | `server/src/controllers/user.controller.js` | Lists records owned by authenticated user (`req.user.uid`) |
+| `createUserController` | `server/src/controllers/user.controller.js` | Creates user bound to `req.user.uid` |
+| `getUserByIdController` | `server/src/controllers/user.controller.js` | Gets user by ID with ownership check (403 for other users) |
+| `updateUserController` | `server/src/controllers/user.controller.js` | Updates user by ID with ownership check (403 for other users) |
+| `deleteUserController` | `server/src/controllers/user.controller.js` | Deletes user by ID with ownership check (403 for other users) |
 | `getHealth` | `server/src/controllers/health.controller.js` | Health check response |
 | `testApi` | `server/src/controllers/test.controller.js` | Echo `req.body` |
 | `folder.controller.js` | `server/src/controllers/folder.controller.js` | ⚠️ Empty file (0 bytes) |
@@ -148,12 +147,12 @@
 
 | Function | Path | Purpose |
 |----------|------|---------|
-| `getUserByFirebaseUid` | `server/src/services/user.service.js` | Fetches user from `users` table by `firebase_uid` (excludes `password_hash`) |
-| `getUsers` | `server/src/services/user.service.js` | `SELECT * FROM users` |
-| `createUser` | `server/src/services/user.service.js` | `INSERT INTO users (name, email, password_hash)` |
-| `getUserById` | `server/src/services/user.service.js` | `SELECT * FROM users WHERE id = $1` |
-| `updateUser` | `server/src/services/user.service.js` | Update name/email |
-| `deleteUser` | `server/src/services/user.service.js` | `DELETE FROM users WHERE id = $1` |
+| `getUsers` | `server/src/services/user.service.js` | Queries `users` by `firebase_uid`, excludes `password_hash` |
+| `createUser` | `server/src/services/user.service.js` | `INSERT INTO users` with `firebase_uid`, excludes `password_hash` |
+| `getUserById` | `server/src/services/user.service.js` | `SELECT` by ID or `firebase_uid`, excludes `password_hash` |
+| `updateUser` | `server/src/services/user.service.js` | `UPDATE users`, excludes `password_hash` |
+| `deleteUser` | `server/src/services/user.service.js` | `DELETE FROM users`, excludes `password_hash` |
+| `getUserByFirebaseUid` | `server/src/services/user.service.js` | Fetches user by `firebase_uid`, excludes `password_hash` |
 | `getHealthStatus` | `server/src/services/health.service.js` | Returns static `{ service, status }` |
 | `folder.service.js` | `server/src/services/folder.service.js` | ⚠️ Empty file (0 bytes) |
 
@@ -175,9 +174,8 @@
 | 1 | **Color scheme fallback** — `Colors[scheme === 'unspecified' ? 'light' : scheme]` repeated; crashes if `scheme` is `null` | `app-tabs.tsx`, `app-tabs.web.tsx`, `use-theme.ts` | Fix in `useTheme()` to safely default to `'light'`; use `useTheme()` everywhere |
 | 2 | **Direct `useColorScheme` from react-native** — bypasses project's hydration-safe hook | `_layout.tsx`, `web-badge.tsx`, `app-tabs.tsx` | Always import from `@/hooks/use-color-scheme` |
 | 3 | **Redundant `dotenv.config()`** — called in config files | `config/db.js`, `config/env.js`, `config/firebase.js` | Call once in entry point |
-| 4 | **Flawed Express Router import** — `import Router from "express"` | `health.routes.js`, `test.routes.js` (fixed in `auth.routes.js`) | Use `express.Router()` consistently |
-| 5 | **Inconsistent error handling in controllers** — some use `next(error)`, others do manual `res.status(500)` | `getUsersController`, `createUserController` vs `getUserByIdController`, `updateUserController`, `deleteUserController` | Always delegate to `next(error)` + central `errorHandler` |
-| 6 | **Animated icon native/web** — mirrored keyframe logic | `animated-icon.tsx`, `animated-icon.web.tsx` | Expected for platform files, but `AnimatedIcon` itself is unused/dead code |
+| 4 | **Flawed Express Router import** — `import Router from "express"` | `health.routes.js`, `test.routes.js` | Use `express.Router()` consistently |
+| 5 | **Animated icon native/web** — mirrored keyframe logic | `animated-icon.tsx`, `animated-icon.web.tsx` | Expected for platform files, but `AnimatedIcon` itself is unused/dead code |
 
 ---
 
@@ -187,43 +185,38 @@
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 1 | **All `/users` CRUD endpoints unprotected** | `server/src/routes/user.routes.js` | No `authMiddleware` on any CRUD route — anyone can list/create/modify/delete users |
-| 2 | **Password hash exposed in user CRUD queries** | `server/src/services/user.service.js` | User CRUD queries use `SELECT *` / `RETURNING *` (`getUserByFirebaseUid` excludes it) |
-| 3 | **No password hashing** | `server/src/services/user.service.js:14` | `password_hash` stored as raw input — no bcrypt/argon2 |
-| 4 | **Color scheme crash** | `use-theme.ts`, `app-tabs.tsx`, `app-tabs.web.tsx` | `Colors[null]` → `undefined` → crash on property access when `useColorScheme()` returns `null` |
-| 5 | **No auth session persistence on native** | `client/src/config/firebase.js` | Uses `getAuth(app)` without `AsyncStorage` persistence — session lost on app restart |
+| 1 | **No password hashing** | `server/src/services/user.service.js` | `password_hash` stored as raw input — needs bcrypt/argon2 |
+| 2 | **Color scheme crash** | `use-theme.ts`, `app-tabs.tsx`, `app-tabs.web.tsx` | `Colors[null]` → `undefined` → crash on property access when `useColorScheme()` returns `null` |
+| 3 | **No auth session persistence on native** | `client/src/config/firebase.js` | Uses `getAuth(app)` without `AsyncStorage` persistence — session lost on app restart |
 
 ### 🟡 High
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 6 | **Inconsistent route prefixes** | `server/src/app.js` | `/api/health`, `/api/test`, `/api/auth` vs `/users` — namespace `/api/users` |
-| 7 | **`updateUser` returns undefined on non-existent user** | `server/src/controllers/user.controller.js:38-49` | No 404 check — returns `200 OK` with `{ data: undefined }` |
-| 8 | **Express Router import bug** | `health.routes.js`, `test.routes.js` | `import Router from "express"` creates Express app instance instead of Router |
-| 9 | **`test_db.js` typo** | `server/test_db.js:1` | `import irebaseApp` missing 'f'; file tests Firebase not DB despite name |
-| 10 | **`.env` not in client `.gitignore`** | `client/.gitignore` | Only `.env*.local` ignored — `client/.env` with Firebase keys could be committed |
+| 4 | **Express Router import bug** | `health.routes.js`, `test.routes.js` | `import Router from "express"` creates Express app instance instead of Router |
+| 5 | **`test_db.js` typo** | `server/test_db.js:1` | `import irebaseApp` missing 'f'; file tests Firebase not DB despite name |
+| 6 | **`.env` not in client `.gitignore`** | `client/.gitignore` | Only `.env*.local` ignored — `client/.env` with Firebase keys could be committed |
 
 ### 🟠 Medium
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 11 | **No database schema / migrations** | Server | `users` table structure only implied by SQL queries — no version-controlled schema |
-| 12 | **`env.js` typo** | `server/src/config/env.js:7` | Default `"devlopment"` instead of `"development"` |
-| 13 | **Clunky update logic** | `server/src/services/user.service.js:25-45` | Rigid if-else branches for name/email combos; can't update other fields |
-| 14 | **Branding remnants** | `app-tabs.web.tsx`, `app.json` | Shows "Expo Starter" and app slug/name is "client" |
-| 15 | **`firebase.js` is `.js` in TS project** | `client/src/config/firebase.js` | Excluded from TypeScript type-checking |
+| 7 | **No database schema / migrations** | Server | `users` table structure only implied by SQL queries — no version-controlled schema |
+| 8 | **`env.js` typo** | `server/src/config/env.js:7` | Default `"devlopment"` instead of `"development"` |
+| 9 | **Branding remnants** | `app-tabs.web.tsx`, `app.json` | Shows "Expo Starter" and app slug/name is "client" |
+| 10 | **`firebase.js` is `.js` in TS project** | `client/src/config/firebase.js` | Excluded from TypeScript type-checking |
 
 ### 🔵 Low
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 16 | **Dead code** | `hint-row.tsx`, `AnimatedIcon` in `animated-icon.tsx` | Unused components |
-| 17 | **`ThemedView` dead props** | `themed-view.tsx` | `lightColor`/`darkColor` destructured but never used |
-| 18 | **Health service double semicolon** | `health.service.js:5` | `};;` syntax quirk |
-| 19 | **Explore screen is boilerplate** | `client/src/app/explore.tsx` | Expo template content, not ShareSync-specific |
-| 20 | **Collapsible chevron rotation inverted** | `client/src/components/ui/collapsible.tsx:26` | 90deg when closed (pointing down), -90deg when open (pointing up) |
-| 21 | **`DB_PORT` passed as string** | `server/src/config/db.js:14` | Not parsed as integer |
-| 22 | **No `pool.on('error')` handler** | `server/src/config/db.js` | Idle client disconnect crashes server |
+| 11 | **Dead code** | `hint-row.tsx`, `AnimatedIcon` in `animated-icon.tsx` | Unused components |
+| 12 | **`ThemedView` dead props** | `themed-view.tsx` | `lightColor`/`darkColor` destructured but never used |
+| 13 | **Health service double semicolon** | `health.service.js:5` | `};;` syntax quirk |
+| 14 | **Explore screen is boilerplate** | `client/src/app/explore.tsx` | Expo template content, not ShareSync-specific |
+| 15 | **Collapsible chevron rotation inverted** | `client/src/components/ui/collapsible.tsx:26` | 90deg when closed (pointing down), -90deg when open (pointing up) |
+| 16 | **`DB_PORT` passed as string** | `server/src/config/db.js:14` | Not parsed as integer |
+| 17 | **No `pool.on('error')` handler** | `server/src/config/db.js` | Idle client disconnect crashes server |
 
 ---
 
@@ -231,4 +224,4 @@
 
 | Date | Changes |
 |------|---------|
-| 2026-11-16 | **Backend Login API Secured & Verified:**<br>1. Removed raw `firebase_uid` authentication loophole from request body.<br>2. Implemented `POST /api/auth/login` and `POST /auth/login` to accept and verify Firebase ID tokens via Bearer header or body `idToken`.<br>3. Extracted verified UID from decoded Firebase token (`req.user.uid`).<br>4. Added `getUserByFirebaseUid` in `user.service.js` to fetch user from PostgreSQL without exposing `password_hash`.<br>5. Added `firebase_uid` column to PostgreSQL `users` table.<br>6. Standardized response format `{ success: true, message: "Login successful", data: user, user: user }`.<br>7. Added 401 handling for missing, invalid, and expired tokens.<br>8. Fixed critical bugs: Firebase Admin initialized on server boot; fixed `/error` fatal crash; added CORS middleware; fixed `errorHandler.js` typos.<br>9. Created comprehensive test suite `server/test_auth_login.mjs` (10 test suites, 32 assertions passed).<br>10. Updated client `index.tsx` to call `POST /api/auth/login` with the ID token, with loading states and error handling. Verified client compiles with zero TypeScript errors. |
+| 2026-11-16 | **User CRUD APIs Secured & Verified:**<br>1. Applied `authMiddleware` to all user routes (`GET /`, `POST /`, `GET /:id`, `PATCH /:id`, `DELETE /:id`).<br>2. Enforced ownership using verified Firebase UID from `req.user.uid`.<br>3. Blocked cross-user access, updates, and deletes with HTTP 403 Forbidden.<br>4. Completely removed `password_hash` from all user service queries (`SELECT` and `RETURNING`).<br>5. Added proper 401, 403, and 404 error handling across all controllers.<br>6. Mounted `/api/users` alongside `/users`.<br>7. Added comprehensive automated test suite `server/test_user_crud.mjs` (43 passed tests, 0 failures). Total automated test assertions passing across suites: 75.<br>8. Verified regression-free with all 32 auth login tests passing. |

@@ -37,6 +37,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/test", testRouter);
 app.use("/api/auth", authRouter);
 app.use("/auth", authRouter);
+app.use("/api/users", userRouter);
 app.use("/users", userRouter);
 
     

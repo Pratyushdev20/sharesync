@@ -9,27 +9,30 @@
 
 | # | Feature | Client | Server | Notes |
 |---|---------|--------|--------|-------|
-| 1 | Firebase email/password login | ✅ `app/index.tsx` | — | `signInWithEmailAndPassword`; obtains Firebase ID token |
-| 2 | Verified Backend Login API | ✅ `app/index.tsx` | ✅ `POST /api/auth/login` | Accepts Firebase ID token via Bearer header or body, verifies with Firebase Admin SDK, extracts UID, fetches PostgreSQL user |
-| 3 | Auth token verification route | — | ✅ `GET /auth`, `GET /api/auth` | Uses `authMiddleware` to verify Firebase Bearer token |
-| 4 | Secure User CRUD API | — | ✅ `/users`, `/api/users` routes | Protected by `authMiddleware`; strict ownership enforcement via `req.user.uid`; zero `password_hash` exposure; proper 401/403/404 |
-| 5 | Health check endpoint | — | ✅ `GET /api/health` | Static response via `health.service.js` |
-| 6 | Test echo endpoint | — | ✅ `POST /api/test/users` | Returns `req.body` back |
-| 7 | Firebase Admin SDK initialization on boot | — | ✅ `src/app.js`, `config/firebase.js` | Initialized at application startup; null-safe private key parsing |
-| 8 | CORS middleware | — | ✅ `src/app.js` | Cross-origin headers enabled for web and mobile clients |
-| 9 | PostgreSQL connection pool | — | ✅ `config/db.js` | Reads DB config from env vars |
-| 10 | Environment config module | — | ✅ `config/env.js` | Exposes `port` and `nodeEnv` |
-| 11 | Request logger middleware | — | ✅ `middleware/logger.js` | Logs `[METHOD] /path` to console |
-| 12 | Standardized error handler | — | ✅ `middleware/errorHandler.js` | Central JSON error responses with `success: false` and HTTP status |
-| 13 | Custom AppError class | — | ✅ `utils/AppError.js` | `extends Error` with `statusCode`/`statuscode` and `isOperational` |
-| 14 | Secure User service layer | — | ✅ `services/user.service.js` | Data-access for `users` table without `password_hash` leaks; ownership queries |
-| 15 | Firebase client SDK init | ✅ `config/firebase.js` | — | Uses `EXPO_PUBLIC_FIREBASE_*` env vars; exports `auth` |
-| 16 | Theme system (light/dark) | ✅ `constants/theme.ts` | — | `Colors`, `Fonts`, `Spacing`, `BottomTabInset`, `MaxContentWidth` |
-| 17 | Color scheme hooks | ✅ hooks | — | `useColorScheme` (native + web hydration-safe), `useTheme` |
-| 18 | Themed UI primitives | ✅ components | — | `ThemedText` (8 variants), `ThemedView`, `Collapsible`, `ExternalLink` |
-| 19 | Tab navigation | ✅ `app/_layout.tsx` | — | Native tabs (`AppTabs`) + web tabs (`AppTabs.web`) via Expo Router |
-| 20 | Animated splash overlay | ✅ `animated-icon.tsx` | — | Reanimated keyframe animations + splash screen hide |
-| 21 | Explore screen | ✅ `app/explore.tsx` | — | Expo boilerplate docs/tutorial content |
+| 1 | Dedicated Login screen | ✅ `app/login.tsx` | — | `signInWithEmailAndPassword`; backend integration; displays token |
+| 2 | Verified Backend Login API | ✅ `app/login.tsx` | ✅ `POST /api/auth/login` | Accepts Firebase ID token via Bearer header or body, verifies with Firebase Admin SDK, extracts UID, fetches PostgreSQL user |
+| 3 | Firebase Auth Session Persistence | ✅ `config/firebase.ts` | — | Configured with `initializeAuth()` and `getReactNativePersistence(AsyncStorage)`; singleton pattern |
+| 4 | Global Auth Context & State Management | ✅ `context/AuthContext.tsx` | — | `AuthProvider`, `useAuth()`, `onAuthStateChanged()` listener with cleanup, `user` and `loading` states, `login`, `logout` |
+| 5 | Protected Routes & Navigation Guard | ✅ `app/_layout.tsx` | — | Redirects unauthenticated users to `/login`; redirects authenticated users away from `/login` to `/`; prevents flashes and loops with loading screen |
+| 6 | Protected Home Dashboard | ✅ `app/index.tsx` | — | Displays authenticated user info, UID, session state, Postman ID token viewer, sign out action |
+| 7 | Auth token verification route | — | ✅ `GET /auth`, `GET /api/auth` | Uses `authMiddleware` to verify Firebase Bearer token |
+| 8 | Secure User CRUD API | — | ✅ `/users`, `/api/users` routes | Protected by `authMiddleware`; strict ownership enforcement via `req.user.uid`; zero `password_hash` exposure; proper 401/403/404 |
+| 9 | Health check endpoint | — | ✅ `GET /api/health` | Static response via `health.service.js` |
+| 10 | Test echo endpoint | — | ✅ `POST /api/test/users` | Returns `req.body` back |
+| 11 | Firebase Admin SDK initialization on boot | — | ✅ `src/app.js`, `config/firebase.js` | Initialized at application startup; null-safe private key parsing |
+| 12 | CORS middleware | — | ✅ `src/app.js` | Cross-origin headers enabled for web and mobile clients |
+| 13 | PostgreSQL connection pool | — | ✅ `config/db.js` | Reads DB config from env vars |
+| 14 | Environment config module | — | ✅ `config/env.js` | Exposes `port` and `nodeEnv` |
+| 15 | Request logger middleware | — | ✅ `middleware/logger.js` | Logs `[METHOD] /path` to console |
+| 16 | Standardized error handler | — | ✅ `middleware/errorHandler.js` | Central JSON error responses with `success: false` and HTTP status |
+| 17 | Custom AppError class | — | ✅ `utils/AppError.js` | `extends Error` with `statusCode`/`statuscode` and `isOperational` |
+| 18 | Secure User service layer | — | ✅ `services/user.service.js` | Data-access for `users` table without `password_hash` leaks; ownership queries |
+| 19 | Theme system (light/dark) | ✅ `constants/theme.ts` | — | `Colors`, `Fonts`, `Spacing`, `BottomTabInset`, `MaxContentWidth` |
+| 20 | Color scheme hooks (safe fallback) | ✅ hooks | — | `useColorScheme` (native + web hydration-safe), crash-proof `useTheme` defaulting safely to `'light'` |
+| 21 | Themed UI primitives | ✅ components | — | `ThemedText` (8 variants), `ThemedView`, `Collapsible`, `ExternalLink` |
+| 22 | Tab navigation | ✅ `app/_layout.tsx` | — | Native tabs (`AppTabs`) + web tabs (`AppTabs.web`) via Expo Router |
+| 23 | Animated splash overlay | ✅ `animated-icon.tsx` | — | Reanimated keyframe animations + splash screen hide |
+| 24 | Explore screen (protected) | ✅ `app/explore.tsx` | — | Protected behind NavigationGuard |
 
 ---
 
@@ -39,19 +42,16 @@
 |---|---------|----------|-------|
 | 1 | **File / content sharing (core feature)** | 🔴 High | App's core purpose — no implementation exists |
 | 2 | **Real-time sync** | 🔴 High | No WebSocket or real-time infrastructure |
-| 3 | **Auth state persistence (native)** | 🔴 High | `getAuth()` has no `AsyncStorage` persistence — sessions lost on app restart |
-| 4 | **Auth guard / protected routes** | 🔴 High | No `onAuthStateChanged` listener; no route guard for main tabs |
-| 5 | **User registration (client & backend sync)**| 🔴 High | Need sign-up screen and backend user provisioning |
-| 6 | **Password hashing** | 🔴 High | `createUser` stores raw `password_hash` — needs bcrypt/argon2 |
-| 7 | **Google sign-in** | 🟡 Medium | Not started |
-| 8 | **Profile screen** | 🟡 Medium | No profile view/edit screen in client |
-| 9 | **Folder management** | 🟡 Medium | `folder.controller.js`, `folder.routes.js`, `folder.service.js` are 0-byte stubs |
-| 10 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
-| 11 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
-| 12 | **Home screen content** | 🟡 Medium | Needs actual home dashboard rather than login test screen |
-| 13 | **Push notifications** | 🔵 Low | Not started |
-| 14 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
-| 15 | **Structured logging** | 🔵 Low | Only `console.log/error` |
+| 3 | **User registration (client & backend sync)**| 🔴 High | Need sign-up screen and backend user provisioning |
+| 4 | **Password hashing** | 🔴 High | `createUser` stores raw `password_hash` — needs bcrypt/argon2 |
+| 5 | **Google sign-in** | 🟡 Medium | Not started |
+| 6 | **Profile screen** | 🟡 Medium | No profile view/edit screen in client |
+| 7 | **Folder management** | 🟡 Medium | `folder.controller.js`, `folder.routes.js`, `folder.service.js` are 0-byte stubs |
+| 8 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
+| 9 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
+| 10 | **Push notifications** | 🔵 Low | Not started |
+| 11 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
+| 12 | **Structured logging** | 🔵 Low | Only `console.log/error` |
 
 ---
 
@@ -69,9 +69,16 @@
 
 | File | Path | Exports | Purpose |
 |------|------|---------|---------|
-| Root layout | `client/src/app/_layout.tsx` | `TabLayout` (default) | Splash screen, ThemeProvider, mounts `AppTabs` |
-| Home / Login screen | `client/src/app/index.tsx` | `HomeScreen` (default) | Firebase login + Backend `POST /api/auth/login` integration + ID token display |
-| Explore | `client/src/app/explore.tsx` | `TabTwoScreen` (default) | Expo docs/tutorial boilerplate |
+| Root layout | `client/src/app/_layout.tsx` | `RootLayout` (default) | AuthProvider, ThemeProvider, NavigationGuard (route protection) |
+| Login screen | `client/src/app/login.tsx` | `LoginScreen` (default) | Dedicated login screen with Firebase + Backend authentication |
+| Home screen | `client/src/app/index.tsx` | `HomeScreen` (default) | Protected home screen: user info, UID, Postman token viewer, sign out |
+| Explore | `client/src/app/explore.tsx` | `TabTwoScreen` (default) | Protected Explore screen |
+
+### Client — Contexts & State
+
+| File | Path | Exports | Purpose |
+|------|------|---------|---------|
+| Auth Context | `client/src/context/AuthContext.tsx` | `AuthProvider`, `useAuth`, `AuthContextType` | Centralized Firebase auth state, persistence listener, login/logout |
 
 ### Client — Reusable Components
 
@@ -81,8 +88,8 @@
 | `ThemedView` | `client/src/components/themed-view.tsx` | `ThemedView`, `ThemedViewProps` | Theme-aware view container |
 | `Collapsible` | `client/src/components/ui/collapsible.tsx` | `Collapsible` | Expandable/collapsible section with animation |
 | `ExternalLink` | `client/src/components/external-link.tsx` | `ExternalLink` | Opens URL in in-app browser (native) or new tab (web) |
-| `AppTabs` | `client/src/components/app-tabs.tsx` | `AppTabs` (default) | Native bottom tab bar (Home, Explore) via `expo-router/unstable-native-tabs` |
-| `AppTabs` (web) | `client/src/components/app-tabs.web.tsx` | `AppTabs` (default), `TabButton`, `CustomTabList` | Web tab bar with floating header |
+| `AppTabs` | `client/src/components/app-tabs.tsx` | `AppTabs` (default) | Native bottom tab bar (Home, Explore) via `expo-router/unstable-native-tabs` with safe theme fallback |
+| `AppTabs` (web) | `client/src/components/app-tabs.web.tsx` | `AppTabs` (default), `TabButton`, `CustomTabList` | Web tab bar with floating header and safe theme fallback |
 | `AnimatedSplashOverlay` | `client/src/components/animated-icon.tsx` | `AnimatedSplashOverlay`, `AnimatedIcon` | Splash screen fade-out animation |
 | `AnimatedSplashOverlay` (web) | `client/src/components/animated-icon.web.tsx` | `AnimatedSplashOverlay`, `AnimatedIcon` | Web version (returns null for overlay) |
 | `HintRow` | `client/src/components/hint-row.tsx` | `HintRow` | Title + code snippet pill badge (⚠️ unused) |
@@ -94,13 +101,14 @@
 |------|------|---------|
 | `useColorScheme` | `client/src/hooks/use-color-scheme.ts` | Re-export of RN `useColorScheme` (native) |
 | `useColorScheme` (web) | `client/src/hooks/use-color-scheme.web.ts` | Hydration-safe color scheme for web SSR |
-| `useTheme` | `client/src/hooks/use-theme.ts` | Returns active `Colors.light` or `Colors.dark` object |
+| `useTheme` | `client/src/hooks/use-theme.ts` | Crash-safe theme resolver defaulting safely to `'light'` |
 
 ### Client — Config & Constants
 
 | File | Path | Exports | Purpose |
 |------|------|---------|---------|
-| Firebase config | `client/src/config/firebase.js` | `auth` | Firebase client init from `EXPO_PUBLIC_FIREBASE_*` env vars |
+| Firebase config | `client/src/config/firebase.ts` | `app`, `auth` (default) | Firebase client init with `AsyncStorage` persistence & singleton pattern |
+| Type augmentations | `client/src/types/firebase-auth.d.ts` | — | Declares `getReactNativePersistence` for TypeScript |
 | Theme constants | `client/src/constants/theme.ts` | `Colors`, `ThemeColor`, `Fonts`, `Spacing`, `BottomTabInset`, `MaxContentWidth` | Design tokens: colors, fonts, spacing |
 | Global CSS | `client/src/global.css` | — | CSS font family variables |
 
@@ -171,11 +179,9 @@
 
 | # | Duplication | Locations | Recommendation |
 |---|-------------|-----------|----------------|
-| 1 | **Color scheme fallback** — `Colors[scheme === 'unspecified' ? 'light' : scheme]` repeated; crashes if `scheme` is `null` | `app-tabs.tsx`, `app-tabs.web.tsx`, `use-theme.ts` | Fix in `useTheme()` to safely default to `'light'`; use `useTheme()` everywhere |
-| 2 | **Direct `useColorScheme` from react-native** — bypasses project's hydration-safe hook | `_layout.tsx`, `web-badge.tsx`, `app-tabs.tsx` | Always import from `@/hooks/use-color-scheme` |
-| 3 | **Redundant `dotenv.config()`** — called in config files | `config/db.js`, `config/env.js`, `config/firebase.js` | Call once in entry point |
-| 4 | **Flawed Express Router import** — `import Router from "express"` | `health.routes.js`, `test.routes.js` | Use `express.Router()` consistently |
-| 5 | **Animated icon native/web** — mirrored keyframe logic | `animated-icon.tsx`, `animated-icon.web.tsx` | Expected for platform files, but `AnimatedIcon` itself is unused/dead code |
+| 1 | **Redundant `dotenv.config()`** — called in config files | `config/db.js`, `config/env.js`, `config/firebase.js` | Call once in entry point |
+| 2 | **Flawed Express Router import** — `import Router from "express"` | `health.routes.js`, `test.routes.js` | Use `express.Router()` consistently |
+| 3 | **Animated icon native/web** — mirrored keyframe logic | `animated-icon.tsx`, `animated-icon.web.tsx` | Expected for platform files, but `AnimatedIcon` itself is unused/dead code |
 
 ---
 
@@ -186,37 +192,34 @@
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
 | 1 | **No password hashing** | `server/src/services/user.service.js` | `password_hash` stored as raw input — needs bcrypt/argon2 |
-| 2 | **Color scheme crash** | `use-theme.ts`, `app-tabs.tsx`, `app-tabs.web.tsx` | `Colors[null]` → `undefined` → crash on property access when `useColorScheme()` returns `null` |
-| 3 | **No auth session persistence on native** | `client/src/config/firebase.js` | Uses `getAuth(app)` without `AsyncStorage` persistence — session lost on app restart |
 
 ### 🟡 High
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 4 | **Express Router import bug** | `health.routes.js`, `test.routes.js` | `import Router from "express"` creates Express app instance instead of Router |
-| 5 | **`test_db.js` typo** | `server/test_db.js:1` | `import irebaseApp` missing 'f'; file tests Firebase not DB despite name |
-| 6 | **`.env` not in client `.gitignore`** | `client/.gitignore` | Only `.env*.local` ignored — `client/.env` with Firebase keys could be committed |
+| 2 | **Express Router import bug** | `health.routes.js`, `test.routes.js` | `import Router from "express"` creates Express app instance instead of Router |
+| 3 | **`test_db.js` typo** | `server/test_db.js:1` | `import irebaseApp` missing 'f'; file tests Firebase not DB despite name |
+| 4 | **`.env` not in client `.gitignore`** | `client/.gitignore` | Only `.env*.local` ignored — `client/.env` with Firebase keys could be committed |
 
 ### 🟠 Medium
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 7 | **No database schema / migrations** | Server | `users` table structure only implied by SQL queries — no version-controlled schema |
-| 8 | **`env.js` typo** | `server/src/config/env.js:7` | Default `"devlopment"` instead of `"development"` |
-| 9 | **Branding remnants** | `app-tabs.web.tsx`, `app.json` | Shows "Expo Starter" and app slug/name is "client" |
-| 10 | **`firebase.js` is `.js` in TS project** | `client/src/config/firebase.js` | Excluded from TypeScript type-checking |
+| 5 | **No database schema / migrations** | Server | `users` table structure only implied by SQL queries — no version-controlled schema |
+| 6 | **`env.js` typo** | `server/src/config/env.js:7` | Default `"devlopment"` instead of `"development"` |
+| 7 | **Branding remnants** | `app-tabs.web.tsx`, `app.json` | Shows "Expo Starter" and app slug/name is "client" |
 
 ### 🔵 Low
 
 | # | Issue | Location | Details |
 |---|-------|----------|---------|
-| 11 | **Dead code** | `hint-row.tsx`, `AnimatedIcon` in `animated-icon.tsx` | Unused components |
-| 12 | **`ThemedView` dead props** | `themed-view.tsx` | `lightColor`/`darkColor` destructured but never used |
-| 13 | **Health service double semicolon** | `health.service.js:5` | `};;` syntax quirk |
-| 14 | **Explore screen is boilerplate** | `client/src/app/explore.tsx` | Expo template content, not ShareSync-specific |
-| 15 | **Collapsible chevron rotation inverted** | `client/src/components/ui/collapsible.tsx:26` | 90deg when closed (pointing down), -90deg when open (pointing up) |
-| 16 | **`DB_PORT` passed as string** | `server/src/config/db.js:14` | Not parsed as integer |
-| 17 | **No `pool.on('error')` handler** | `server/src/config/db.js` | Idle client disconnect crashes server |
+| 8 | **Dead code** | `hint-row.tsx`, `AnimatedIcon` in `animated-icon.tsx` | Unused components |
+| 9 | **`ThemedView` dead props** | `themed-view.tsx` | `lightColor`/`darkColor` destructured but never used |
+| 10 | **Health service double semicolon** | `health.service.js:5` | `};;` syntax quirk |
+| 11 | **Explore screen is boilerplate** | `client/src/app/explore.tsx` | Expo template content, not ShareSync-specific |
+| 12 | **Collapsible chevron rotation inverted** | `client/src/components/ui/collapsible.tsx:26` | 90deg when closed (pointing down), -90deg when open (pointing up) |
+| 13 | **`DB_PORT` passed as string** | `server/src/config/db.js:14` | Not parsed as integer |
+| 14 | **No `pool.on('error')` handler** | `server/src/config/db.js` | Idle client disconnect crashes server |
 
 ---
 
@@ -224,4 +227,4 @@
 
 | Date | Changes |
 |------|---------|
-| 2026-11-16 | **User CRUD APIs Secured & Verified:**<br>1. Applied `authMiddleware` to all user routes (`GET /`, `POST /`, `GET /:id`, `PATCH /:id`, `DELETE /:id`).<br>2. Enforced ownership using verified Firebase UID from `req.user.uid`.<br>3. Blocked cross-user access, updates, and deletes with HTTP 403 Forbidden.<br>4. Completely removed `password_hash` from all user service queries (`SELECT` and `RETURNING`).<br>5. Added proper 401, 403, and 404 error handling across all controllers.<br>6. Mounted `/api/users` alongside `/users`.<br>7. Added comprehensive automated test suite `server/test_user_crud.mjs` (43 passed tests, 0 failures). Total automated test assertions passing across suites: 75.<br>8. Verified regression-free with all 32 auth login tests passing. |
+| 2026-11-16 | **Firebase Auth Persistence & Protected Routes Implemented (Feature 17):**<br>1. Installed `@react-native-async-storage/async-storage` via Expo.<br>2. Configured `client/src/config/firebase.ts` with `initializeAuth()` and `getReactNativePersistence(AsyncStorage)` ensuring singleton initialization.<br>3. Implemented `AuthProvider` and `useAuth()` hook in `client/src/context/AuthContext.tsx` with `onAuthStateChanged()` lifecycle tracking and unsubscription.<br>4. Built `NavigationGuard` in `client/src/app/_layout.tsx`: unauthenticated users redirected to `/login`; authenticated users redirected away from `/login` to `/`; loading screen rendered during auth resolution.<br>5. Created dedicated `client/src/app/login.tsx` (renders without tab bar).<br>6. Updated `client/src/app/index.tsx` as protected Home dashboard with user session details, Postman ID token viewer, and logout action.<br>7. Fixed color scheme crashes across `app-tabs.tsx`, `app-tabs.web.tsx`, and `use-theme.ts`.<br>8. Verified TypeScript compilation: 0 errors.<br>9. Automated tests passing: 25 client auth tests, 32 server login tests, 43 user CRUD tests (100 total passing assertions). |

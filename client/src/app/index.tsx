@@ -1,99 +1,72 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   StyleSheet,
   Text,
-  TextInput,
   View,
   Pressable,
-  Alert,
   ScrollView,
 } from "react-native";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../config/firebase";
+import { useAuth } from "@/context/AuthContext";
+import { ExternalLink } from "@/components/external-link";
 
 export default function HomeScreen() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { user, logout, getIdToken } = useAuth();
+  const [token, setToken] = useState<string>("");
+  const [loggingOut, setLoggingOut] = useState<boolean>(false);
 
-  const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000";
+  useEffect(() => {
+    async function fetchToken() {
+      const t = await getIdToken();
+      if (t) setToken(t);
+    }
+    fetchToken();
+  }, [user]);
 
-  async function handleLogin() {
-    setLoading(true);
-    setMessage("");
+  async function handleLogout() {
     try {
-      const result = await signInWithEmailAndPassword(
-        auth,
-        email.trim(),
-        password
-      );
-
-      const idToken = await result.user.getIdToken();
-      setToken(idToken);
-
-      // Authenticate with backend using the verified Firebase ID token
-      try {
-        const response = await fetch(`${API_URL}/api/auth/login`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${idToken}`,
-          },
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          setMessage(`Login successful! Welcome, ${data.data?.name || data.data?.email || "User"}!`);
-        } else {
-          setMessage(`Backend error (${response.status}): ${data.message || "Failed to authenticate"}`);
-        }
-      } catch (backendErr: any) {
-        setMessage(`Firebase login succeeded, but backend server unreachable: ${backendErr.message}`);
-      }
-    } catch (error: any) {
-      setMessage(error.message || "Login failed");
+      setLoggingOut(true);
+      await logout();
+    } catch (error) {
+      console.error("Logout error:", error);
     } finally {
-      setLoading(false);
+      setLoggingOut(false);
     }
   }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>ShareSync</Text>
-      <Text style={styles.subtitle}>Firebase Authentication Test</Text>
+      <Text style={styles.subtitle}>Secure File & Content Sharing</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
+      <View style={styles.card}>
+        <Text style={styles.cardHeader}>Authenticated Session</Text>
+        <View style={styles.row}>
+          <Text style={styles.label}>Email:</Text>
+          <Text style={styles.value}>{user?.email || "Unknown"}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.label}>UID:</Text>
+          <Text style={styles.value} numberOfLines={1}>
+            {user?.uid || "Unknown"}
+          </Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.label}>Email Verified:</Text>
+          <Text style={styles.value}>
+            {user?.emailVerified ? "Yes" : "No"}
+          </Text>
+        </View>
+      </View>
 
       <Pressable
-        style={[styles.button, loading && styles.buttonDisabled]}
-        onPress={handleLogin}
-        disabled={loading}
+        style={[styles.logoutButton, loggingOut && styles.buttonDisabled]}
+        onPress={handleLogout}
+        disabled={loggingOut}
       >
-        <Text style={styles.buttonText}>
-          {loading ? "Logging in..." : "Login with Firebase"}
+        <Text style={styles.logoutButtonText}>
+          {loggingOut ? "Signing out..." : "Sign Out"}
         </Text>
       </Pressable>
-
-      {!!message && <Text style={styles.message}>{message}</Text>}
 
       {!!token && (
         <View style={styles.tokenContainer}>
@@ -117,53 +90,87 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   title: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: "bold",
     marginBottom: 8,
+    color: "#1e3a8a",
   },
   subtitle: {
+    fontSize: 16,
+    color: "#64748b",
     marginBottom: 24,
   },
-  input: {
+  card: {
     width: "100%",
-    maxWidth: 400,
+    maxWidth: 480,
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#999",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 14,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 20,
   },
-  button: {
-    backgroundColor: "#2563eb",
-    padding: 14,
+  cardHeader: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 16,
+    color: "#0f172a",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    paddingBottom: 8,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    gap: 8,
+  },
+  label: {
+    fontWeight: "600",
+    color: "#475569",
+    fontSize: 14,
+  },
+  value: {
+    color: "#0f172a",
+    fontSize: 14,
+    flexShrink: 1,
+  },
+  logoutButton: {
+    backgroundColor: "#ef4444",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
     borderRadius: 8,
     width: "100%",
-    maxWidth: 400,
+    maxWidth: 480,
     alignItems: "center",
+    marginBottom: 20,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
-  buttonText: {
+  logoutButtonText: {
     color: "#fff",
     fontWeight: "bold",
-  },
-  message: {
-    marginTop: 16,
+    fontSize: 16,
   },
   tokenContainer: {
-    marginTop: 20,
+    marginTop: 10,
     width: "100%",
     maxWidth: 600,
   },
   tokenTitle: {
-    fontWeight: "bold",
+    fontWeight: "600",
     marginBottom: 8,
+    color: "#334155",
   },
   token: {
-    fontSize: 12,
+    fontSize: 11,
     padding: 12,
-    backgroundColor: "#eee",
-    color: "#111",
+    backgroundColor: "#f1f5f9",
+    color: "#0f172a",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    fontFamily: "monospace",
   },
 });

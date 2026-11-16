@@ -18,7 +18,8 @@ function NavigationGuard() {
   const theme = colorScheme === 'dark' ? 'dark' : 'light';
   const colors = Colors[theme];
 
-  const inAuthGroup = (segments as string[])[0] === 'login';
+  const currentSegment = (segments as string[])[0];
+  const inAuthGroup = currentSegment === 'login' || currentSegment === 'signup';
 
   useEffect(() => {
     if (loading) return;
@@ -27,7 +28,7 @@ function NavigationGuard() {
       // Unauthenticated user trying to access protected screen -> redirect to login
       router.replace('/login');
     } else if (user && inAuthGroup) {
-      // Authenticated user on login screen -> redirect to home
+      // Authenticated user on login/signup screen -> redirect to home
       router.replace('/');
     }
   }, [user, loading, inAuthGroup]);

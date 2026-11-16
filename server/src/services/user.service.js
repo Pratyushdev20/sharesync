@@ -18,10 +18,19 @@ export async function getUsers(firebaseUid = null) {
 }
 
 export async function createUser(userData) {
-    const { name, email, password_hash, firebase_uid } = userData;
+    const { name, email, firebase_uid } = userData;
     const result = await pool.query(
-        "INSERT INTO users (name, email, password_hash, firebase_uid) VALUES ($1, $2, $3, $4) RETURNING id, name, email, created_at, firebase_uid",
-        [name, email, password_hash || null, firebase_uid || null]
+        "INSERT INTO users (name, email, firebase_uid) VALUES ($1, $2, $3) RETURNING id, name, email, created_at, firebase_uid",
+        [name, email, firebase_uid || null]
+    );
+    return result.rows[0];
+}
+
+export async function getUserByEmail(email) {
+    if (!email) return null;
+    const result = await pool.query(
+        "SELECT id, name, email, created_at, firebase_uid FROM users WHERE email = $1",
+        [email]
     );
     return result.rows[0];
 }

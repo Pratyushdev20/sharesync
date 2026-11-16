@@ -7,6 +7,7 @@ import {
   Pressable,
   ScrollView,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
 
 export default function LoginScreen() {
@@ -17,6 +18,7 @@ export default function LoginScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   const { login } = useAuth();
+  const router = useRouter();
   const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000";
 
   async function handleLogin() {
@@ -104,6 +106,13 @@ export default function LoginScreen() {
           </Text>
         </View>
       )}
+
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>Don't have an account? </Text>
+        <Pressable onPress={() => router.push("/signup")}>
+          <Text style={styles.linkText}>Sign Up</Text>
+        </Pressable>
+      </View>
     </ScrollView>
   );
 }
@@ -167,5 +176,19 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: "#eee",
     color: "#111",
+  },
+  footer: {
+    flexDirection: "row",
+    marginTop: 24,
+    alignItems: "center",
+  },
+  footerText: {
+    color: "#64748b",
+    fontSize: 14,
+  },
+  linkText: {
+    color: "#2563eb",
+    fontWeight: "bold",
+    fontSize: 14,
   },
 });

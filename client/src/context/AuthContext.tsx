@@ -3,6 +3,8 @@ import {
   User,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   signOut,
   UserCredential,
 } from "firebase/auth";
@@ -12,6 +14,7 @@ export interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<UserCredential>;
+  register: (name: string, email: string, password: string) => Promise<UserCredential>;
   logout: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
 }
@@ -45,6 +48,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return await signInWithEmailAndPassword(auth, email.trim(), password);
   };
 
+  const register = async (name: string, email: string, password: string): Promise<UserCredential> => {
+    const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    if (name.trim()) {
+      await updateProfile(credential.user, { displayName: name.trim() });
+    }
+    return credential;
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await signOut(auth);
@@ -65,7 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, getIdToken }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, getIdToken }}>
       {children}
     </AuthContext.Provider>
   );

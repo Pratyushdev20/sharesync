@@ -32,7 +32,7 @@ export async function getUsersController(req, res, next) {
 export async function createUserController(req, res, next) {
     try {
         const authUid = req.user.uid;
-        const { name, email, password_hash, firebase_uid } = req.body;
+        const { name, email, firebase_uid } = req.body;
 
         // Ensure user cannot set another user's firebase_uid
         if (firebase_uid && firebase_uid !== authUid) {
@@ -48,7 +48,6 @@ export async function createUserController(req, res, next) {
         const newUser = await createUser({
             name,
             email: email || req.user.email || null,
-            password_hash: password_hash || null,
             firebase_uid: authUid
         });
 

@@ -5,6 +5,7 @@ import healthRouter from "./routes/health.routes.js"
 import testRouter from "./routes/test.routes.js";
 import userRouter from "./routes/user.routes.js";
 import authRouter from "./routes/auth.routes.js";
+import folderRouter from "./routes/folder.routes.js";
 
 
 
@@ -39,6 +40,8 @@ app.use("/api/auth", authRouter);
 app.use("/auth", authRouter);
 app.use("/api/users", userRouter);
 app.use("/users", userRouter);
+app.use("/api/folders", folderRouter);
+app.use("/folders", folderRouter);
 
     
 

@@ -34,6 +34,7 @@
 | 23 | Tab navigation | ✅ `app/_layout.tsx` | — | Native tabs (`AppTabs`) + web tabs (`AppTabs.web`) via Expo Router |
 | 24 | Animated splash overlay | ✅ `animated-icon.tsx` | — | Reanimated keyframe animations + splash screen hide |
 | 25 | Explore screen (protected) | ✅ `app/explore.tsx` | — | Protected behind NavigationGuard |
+| 26 | Secure Folder Management API | — | ✅ `/folders`, `/api/folders` | Full CRUD (`POST`, `GET`, `GET /:id`, `PATCH`/`PUT /:id`, `DELETE`); strict Firebase UID ownership; nested folders & parent ownership validation; duplicate name prevention (409); unsafe deletion prevention for non-empty folders (400); parameterized SQL & AppError |
 
 ---
 
@@ -45,12 +46,11 @@
 | 2 | **Real-time sync** | 🔴 High | No WebSocket or real-time infrastructure |
 | 3 | **Google sign-in** | 🟡 Medium | Not started |
 | 4 | **Profile screen** | 🟡 Medium | No profile view/edit screen in client |
-| 5 | **Folder management** | 🟡 Medium | `folder.controller.js`, `folder.routes.js`, `folder.service.js` are 0-byte stubs |
-| 6 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
-| 7 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
-| 8 | **Push notifications** | 🔵 Low | Not started |
-| 9 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
-| 10 | **Structured logging** | 🔵 Low | Only `console.log/error` |
+| 5 | **Database migrations / schema tool** | 🟡 Medium | Table structures need migration files (e.g. Knex/Prisma/SQL migrations) |
+| 6 | **Input validation (server)** | 🟡 Medium | No Joi/Zod; manual checks only |
+| 7 | **Push notifications** | 🔵 Low | Not started |
+| 8 | **Rate limiting** | 🔵 Low | No rate limiting middleware |
+| 9 | **Structured logging** | 🔵 Low | Only `console.log/error` |
 
 ---
 
@@ -58,7 +58,7 @@
 
 | # | Feature | Status | Files | Blocker |
 |---|---------|--------|-------|---------|
-| 1 | Folder management | Scaffolded (empty stubs) | `folder.controller.js`, `folder.routes.js`, `folder.service.js` | All 3 files are 0 bytes; routes not mounted in `app.js` |
+| — | None | — | — | — |
 
 ---
 
@@ -127,7 +127,7 @@
 | User routes | `server/src/routes/user.routes.js` | `GET /api/users/`, `POST /api/users/`, `GET /api/users/:id`, `PATCH /api/users/:id`, `DELETE /api/users/:id` (all protected by `authMiddleware`) |
 | Health routes | `server/src/routes/health.routes.js` | `GET /api/health/` |
 | Test routes | `server/src/routes/test.routes.js` | `POST /api/test/users` |
-| Folder routes | `server/src/routes/folder.routes.js` | ⚠️ Empty file (0 bytes) |
+| Folder routes | `server/src/routes/folder.routes.js` | Protected folder endpoints (`/`, `/:id`); full CRUD operations |
 
 ### Server — Controllers
 
@@ -142,7 +142,11 @@
 | `deleteUserController` | `server/src/controllers/user.controller.js` | Deletes user by ID with ownership check (403 for other users) |
 | `getHealth` | `server/src/controllers/health.controller.js` | Health check response |
 | `testApi` | `server/src/controllers/test.controller.js` | Echo `req.body` |
-| `folder.controller.js` | `server/src/controllers/folder.controller.js` | ⚠️ Empty file (0 bytes) |
+| `createFolderController` | `server/src/controllers/folder.controller.js` | Handles folder creation with `req.user.uid` |
+| `getFoldersController` | `server/src/controllers/folder.controller.js` | Lists folders owned by user, with optional `parent_folder_id` filter |
+| `getFolderByIdController` | `server/src/controllers/folder.controller.js` | Gets folder by ID with strict ownership, subfolders, and files |
+| `renameFolderController` | `server/src/controllers/folder.controller.js` | Renames folder with name collision checks and updated_at update |
+| `deleteFolderController` | `server/src/controllers/folder.controller.js` | Deletes empty folder, rejecting non-empty deletion |
 
 ### Server — Middleware
 
@@ -164,7 +168,13 @@
 | `updateUser` | `server/src/services/user.service.js` | `UPDATE users`, excludes `password_hash` |
 | `deleteUser` | `server/src/services/user.service.js` | `DELETE FROM users`, excludes `password_hash` |
 | `getHealthStatus` | `server/src/services/health.service.js` | Returns static `{ service, status }` |
-| `folder.service.js` | `server/src/services/folder.service.js` | ⚠️ Empty file (0 bytes) |
+| `createFolder` | `server/src/services/folder.service.js` | Inserts folder into `folders` with parameterized query, checks parent ownership and duplicates |
+| `getFolders` | `server/src/services/folder.service.js` | Queries folders by `owner_firebase_uid`, supports `parent_folder_id` filtering |
+| `getFolderById` | `server/src/services/folder.service.js` | Fetches folder by ID, enforces `owner_firebase_uid === req.user.uid`, returns subfolders & files |
+| `renameFolder` | `server/src/services/folder.service.js` | Updates folder name and `updated_at`, prevents duplicate collisions in same parent |
+| `deleteFolder` | `server/src/services/folder.service.js` | Deletes folder, validates empty state (rejects if subfolders or files exist) |
+| `validateFolderName` | `server/src/services/folder.service.js` | Validates non-empty string, length 1-255, rejects path separators/control chars |
+| `validateFolderId` | `server/src/services/folder.service.js` | Validates positive numeric ID format |
 
 ### Server — Utilities & Config
 
@@ -223,4 +233,5 @@
 
 | Date | Changes |
 |------|---------|
+| 2026-11-17 | **Folder Management API:**<br>1. Migrated PostgreSQL `folders` schema: added `owner_firebase_uid VARCHAR(128)`, `parent_folder_id BIGINT REFERENCES folders(id) ON DELETE RESTRICT`, `updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, dropped NOT NULL on legacy `owner_id`, added indexing on `owner_firebase_uid`, `parent_folder_id`, and partial unique indexes for root and child folder names.<br>2. Implemented `server/src/services/folder.service.js` with `createFolder`, `getFolders`, `getFolderById`, `renameFolder`, `deleteFolder`, `validateFolderName`, and `validateFolderId`. Uses parameterized queries and throws `AppError`.<br>3. Implemented `server/src/controllers/folder.controller.js` for all CRUD operations, binding caller to `req.user.uid`.<br>4. Implemented `server/src/routes/folder.routes.js` with `authMiddleware` protecting every endpoint.<br>5. Mounted `/api/folders` and `/folders` in `server/src/app.js`.<br>6. Implemented strict ownership checks (403 for non-owners, 404 for non-existent folders), nested parent ownership verification, duplicate folder name collision checks (409), and rejection of unsafe deletions for folders containing subfolders or files (400).<br>7. Created comprehensive automated test suite `server/test_folder_crud.mjs` verifying 58 assertions across authentication, validation, creation, nesting, listing, retrieval, renaming, safe/unsafe deletion, and route aliases (58/58 passed, 0 failures). Total passing test assertions across all suites: 189 passed, 0 failures. |
 | 2026-11-16 | **User Registration & Backend Synchronization (Feature 18):**<br>1. Built `client/src/app/signup.tsx` with name, email, password fields, display name update, backend synchronization, and rollback on failure.<br>2. Implemented `register` in `client/src/context/AuthContext.tsx` using `createUserWithEmailAndPassword()` and `updateProfile()`.<br>3. Implemented `POST /api/auth/register` and `/auth/register` in `server/src/controllers/auth.controller.js` and `server/src/routes/auth.routes.js`.<br>4. Extracted UID and email strictly from verified Firebase ID token via `authMiddleware`; prevented duplicate registration via UID and email checks (409 Conflict); added name validation (400 Bad Request).<br>5. Audited and eliminated unsafe password storage: altered PostgreSQL `users.password_hash` to NULL, removed password insertion from `createUser` in `user.service.js` and `user.controller.js`.<br>6. Added links between Login and Signup screens.<br>7. Updated `NavigationGuard` in `_layout.tsx` to handle `/signup` without tab bar.<br>8. Added comprehensive automated test suite `server/test_auth_register.mjs` (31 assertions passed, 0 failures). Total passing test assertions across all suites: 131 passed, 0 failures. |

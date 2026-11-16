@@ -1,14 +1,16 @@
-import  Router  from "express";
+import express from "express";
 import { authMiddleware } from "../middleware/auth.middleware.js";
+import { loginController } from "../controllers/auth.controller.js";
 
+const router = express.Router();
 
-
-const router = Router();
-
-router.get("/",authMiddleware,(req,res)=>{
+router.get("/", authMiddleware, (req, res) => {
     return res.status(200).json({
-        sucess:true,
-        user:req.user
+        success: true,
+        user: req.user
     });
 });
-export default router ;
+
+router.post("/login", authMiddleware, loginController);
+
+export default router;

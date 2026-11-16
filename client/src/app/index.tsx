@@ -17,8 +17,13 @@ export default function HomeScreen() {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000";
 
   async function handleLogin() {
+    setLoading(true);
+    setMessage("");
     try {
       const result = await signInWithEmailAndPassword(
         auth,
@@ -27,11 +32,32 @@ export default function HomeScreen() {
       );
 
       const idToken = await result.user.getIdToken();
-
       setToken(idToken);
-      setMessage("Firebase login successful!");
+
+      // Authenticate with backend using the verified Firebase ID token
+      try {
+        const response = await fetch(`${API_URL}/api/auth/login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          setMessage(`Login successful! Welcome, ${data.data?.name || data.data?.email || "User"}!`);
+        } else {
+          setMessage(`Backend error (${response.status}): ${data.message || "Failed to authenticate"}`);
+        }
+      } catch (backendErr: any) {
+        setMessage(`Firebase login succeeded, but backend server unreachable: ${backendErr.message}`);
+      }
     } catch (error: any) {
       setMessage(error.message || "Login failed");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -57,8 +83,14 @@ export default function HomeScreen() {
         secureTextEntry
       />
 
-      <Pressable style={styles.button} onPress={handleLogin}>
-        <Text style={styles.buttonText}>Login with Firebase</Text>
+      <Pressable
+        style={[styles.button, loading && styles.buttonDisabled]}
+        onPress={handleLogin}
+        disabled={loading}
+      >
+        <Text style={styles.buttonText}>
+          {loading ? "Logging in..." : "Login with Firebase"}
+        </Text>
       </Pressable>
 
       {!!message && <Text style={styles.message}>{message}</Text>}
@@ -108,6 +140,9 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 400,
     alignItems: "center",
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: "#fff",

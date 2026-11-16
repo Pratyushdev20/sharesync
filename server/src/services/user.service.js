@@ -43,8 +43,26 @@ export async function updateUser(userId,userdata){
         }
         
     }
-}export async function deleteUser(userId){
-    const result = await pool.query("DELETE FROM users WHERE ID = $1 RETURNING *;",[userId]);
-    return result.rows[0];
+}
 
+export async function deleteUser(userId) {
+    const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING *;", [userId]);
+    return result.rows[0];
+}
+
+export async function getUserByFirebaseUid(firebaseUid, email = null) {
+    let result = await pool.query(
+        "SELECT id, name, email, created_at, firebase_uid FROM users WHERE firebase_uid = $1",
+        [firebaseUid]
+    );
+
+    // If user is not yet associated by firebase_uid, check if they exist by email and link them
+    if (!result.rows[0] && email) {
+        result = await pool.query(
+            "UPDATE users SET firebase_uid = $1 WHERE email = $2 AND firebase_uid IS NULL RETURNING id, name, email, created_at, firebase_uid",
+            [firebaseUid, email]
+        );
+    }
+
+    return result.rows[0];
 }

@@ -6,6 +6,7 @@ import testRouter from "./routes/test.routes.js";
 import userRouter from "./routes/user.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import folderRouter from "./routes/folder.routes.js";
+import fileRouter from "./routes/file.routes.js";
 
 
 
@@ -42,6 +43,8 @@ app.use("/api/users", userRouter);
 app.use("/users", userRouter);
 app.use("/api/folders", folderRouter);
 app.use("/folders", folderRouter);
+app.use("/api/files", fileRouter);
+app.use("/files", fileRouter);
 
     
 

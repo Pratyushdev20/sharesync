@@ -71,7 +71,7 @@ export async function uploadFile(ownerUid, userMeta, fileData, { folder_id = nul
     let validFolderId = null;
 
     // Validate target folder if provided
-    if (folder_id !== null && folder_id !== undefined && folder_id !== "null" && folder_id !== "root") {
+    if (folder_id !== null && folder_id !== undefined && folder_id !== "null" && folder_id !== "root" && folder_id !== "") {
         validFolderId = validateFileId(folder_id);
 
         const folderRes = await pool.query(
@@ -140,7 +140,7 @@ export async function getFiles(ownerUid, { folder_id } = {}) {
         throw new AppError("Unauthorized: Firebase UID is required", 401);
     }
 
-    if (folder_id !== undefined) {
+    if (folder_id !== undefined && folder_id !== "") {
         if (folder_id === "root" || folder_id === "null" || folder_id === null) {
             const result = await pool.query(
                 `SELECT id, name, size, mime_type, folder_id, created_at, updated_at
@@ -353,7 +353,7 @@ export async function moveFile(fileId, ownerUid, targetFolderId) {
 
     let validTargetId = null;
 
-    if (targetFolderId !== null && targetFolderId !== undefined && targetFolderId !== "null" && targetFolderId !== "root") {
+    if (targetFolderId !== null && targetFolderId !== undefined && targetFolderId !== "null" && targetFolderId !== "root" && targetFolderId !== "") {
         validTargetId = validateFileId(targetFolderId);
 
         const folderRes = await pool.query(

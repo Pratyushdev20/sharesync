@@ -26,8 +26,12 @@ export async function uploadFileController(req, res, next) {
         }
 
         const folder_id = req.body?.folder_id !== undefined ? req.body.folder_id : null;
+        const fileData = {
+            ...req.file,
+            originalname: req.body?.name || req.file.originalname
+        };
 
-        const file = await uploadFile(authUid, userMeta, req.file, { folder_id });
+        const file = await uploadFile(authUid, userMeta, fileData, { folder_id });
 
         res.status(201).json({
             success: true,

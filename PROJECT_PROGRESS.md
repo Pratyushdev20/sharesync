@@ -35,6 +35,7 @@
 | 24 | Animated splash overlay | ✅ `animated-icon.tsx` | — | Reanimated keyframe animations + splash screen hide |
 | 25 | Explore screen (protected) | ✅ `app/explore.tsx` | — | Protected behind NavigationGuard |
 | 26 | Secure Folder Management API | — | ✅ `/folders`, `/api/folders` | Full CRUD (`POST`, `GET`, `GET /:id`, `PATCH`/`PUT /:id`, `DELETE`); strict Firebase UID ownership; nested folders & parent ownership validation; duplicate name prevention (409); unsafe deletion prevention for non-empty folders (400); parameterized SQL & AppError |
+| 27 | Secure File Management API | — | ✅ `/files`, `/api/files` | Full file operations: upload (`POST /upload`), listing (`GET /`), metadata (`GET /:id`), secure streaming download (`GET /:id/download`), rename (`PATCH`/`PUT /:id`), move (`PATCH`/`PUT /:id/move`), delete (`DELETE /:id`); Multer memory storage with 50MB limit; magic bytes content validation against whitelist and executable detection; local disk storage abstraction (`storage.service.js`) with UUID isolation; strict Firebase UID ownership and folder access control; case-insensitive duplicate prevention (409); legacy records (`resume.pdf`, id=11) preserved |
 
 ---
 
@@ -128,6 +129,7 @@
 | Health routes | `server/src/routes/health.routes.js` | `GET /api/health/` |
 | Test routes | `server/src/routes/test.routes.js` | `POST /api/test/users` |
 | Folder routes | `server/src/routes/folder.routes.js` | Protected folder endpoints (`/`, `/:id`); full CRUD operations |
+| File routes | `server/src/routes/file.routes.js` | Protected file endpoints (`/upload`, `/`, `/:id`, `/:id/download`, `/:id/move`); full file operations |
 
 ### Server — Controllers
 
@@ -147,6 +149,13 @@
 | `getFolderByIdController` | `server/src/controllers/folder.controller.js` | Gets folder by ID with strict ownership, subfolders, and files |
 | `renameFolderController` | `server/src/controllers/folder.controller.js` | Renames folder with name collision checks and updated_at update |
 | `deleteFolderController` | `server/src/controllers/folder.controller.js` | Deletes empty folder, rejecting non-empty deletion |
+| `uploadFileController` | `server/src/controllers/file.controller.js` | Handles multipart upload with validation and storage |
+| `getFilesController` | `server/src/controllers/file.controller.js` | Lists files owned by user, with optional folder_id filter |
+| `getFileByIdController` | `server/src/controllers/file.controller.js` | Retrieves file metadata by ID with strict ownership validation |
+| `downloadFileController` | `server/src/controllers/file.controller.js` | Streams file download with authentication and Content-Disposition |
+| `renameFileController` | `server/src/controllers/file.controller.js` | Renames file with duplicate collision check |
+| `moveFileController` | `server/src/controllers/file.controller.js` | Moves file between folders with target folder ownership check |
+| `deleteFileController` | `server/src/controllers/file.controller.js` | Deletes file from database and local storage |
 
 ### Server — Middleware
 
@@ -175,11 +184,21 @@
 | `deleteFolder` | `server/src/services/folder.service.js` | Deletes folder, validates empty state (rejects if subfolders or files exist) |
 | `validateFolderName` | `server/src/services/folder.service.js` | Validates non-empty string, length 1-255, rejects path separators/control chars |
 | `validateFolderId` | `server/src/services/folder.service.js` | Validates positive numeric ID format |
+| `uploadFile` | `server/src/services/file.service.js` | Validates content, writes to storage, creates DB record |
+| `getFiles` | `server/src/services/file.service.js` | Queries files by owner_firebase_uid and optional folder_id |
+| `getFileById` | `server/src/services/file.service.js` | Fetches file metadata, enforcing owner_firebase_uid |
+| `getFileForDownload` | `server/src/services/file.service.js` | Fetches file record and readable stream for download |
+| `renameFile` | `server/src/services/file.service.js` | Updates file name with duplicate collision validation |
+| `moveFile` | `server/src/services/file.service.js` | Updates file folder_id with target folder validation |
+| `deleteFile` | `server/src/services/file.service.js` | Removes file record and deletes from storage |
+| `getOrCreatePostgresUserId` | `server/src/services/file.service.js` | Resolves or creates PostgreSQL user for owner_id FK |
+| `storageService` | `server/src/services/storage.service.js` | Storage abstraction layer for local disk (saveFile, getFileStream, deleteFile, fileExists) |
 
 ### Server — Utilities & Config
 
 | File | Path | Exports | Purpose |
 |------|------|---------|---------|
+| `fileValidator` | `server/src/utils/fileValidator.js` | `validateFileName`, `validateFileId`, `detectMagicBytes`, `validateFileContent` | Validates filename safety, numeric IDs, file size, and magic byte signatures |
 | `AppError` | `server/src/utils/AppError.js` | `AppError` (default class) | Custom error with `statusCode`/`statuscode` and `isOperational` |
 | DB pool | `server/src/config/db.js` | `pool` (default) | PostgreSQL `Pool` from env vars |
 | Env config | `server/src/config/env.js` | `env` (default) | `{ port, nodeEnv }` with defaults |
@@ -233,5 +252,6 @@
 
 | Date | Changes |
 |------|---------|
+| 2026-11-18 | **File Management API:**<br>1. Enhanced PostgreSQL `files` schema: added `owner_firebase_uid VARCHAR(128)`, `updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, `idx_files_owner_firebase_uid`, and partial unique indexes `idx_files_unique_name_in_folder` (on `owner_firebase_uid, folder_id, LOWER(name)`) and `idx_files_unique_root_name` (on `owner_firebase_uid, LOWER(name)`) with predicate `WHERE owner_firebase_uid IS NOT NULL` to safely preserve legacy records without conflicts.<br>2. Preserved all legacy records intact, specifically `resume.pdf` (id=11) with `owner_id=1` and `folder_id=4`; maintained `owner_id NOT NULL` foreign key referencing `users(id)`.<br>3. Implemented decoupled storage layer `server/src/services/storage.service.js` with per-user directory isolation (`uploads/<ownerUid>/`), UUID filename generation via Node.js native `crypto.randomUUID()`, path traversal protection, and clean abstraction for future cloud storage integration (S3/GCS). Added `uploads/` to `.gitignore`.<br>4. Implemented file validation utility `server/src/utils/fileValidator.js`: enforces configurable 50MB file size limit (`MAX_FILE_SIZE`), sanitizes filenames against path traversal/control characters, and inspects magic byte signatures (PDF, PNG, JPEG, GIF, WEBP, ZIP/OpenXML, plain text) while explicitly detecting and rejecting disguised executables (PE, ELF, Mach-O).<br>5. Implemented `server/src/services/file.service.js` with `uploadFile`, `getFiles`, `getFileById`, `getFileForDownload`, `renameFile`, `moveFile`, `deleteFile`, and `getOrCreatePostgresUserId`.<br>6. Implemented `server/src/controllers/file.controller.js` for all 7 file endpoints with safe streaming download headers (RFC 5987 Content-Disposition) and zero exposure of internal storage paths.<br>7. Configured `server/src/routes/file.routes.js` with Multer memory storage and `authMiddleware`; mounted at `/api/files` and `/files` in `server/src/app.js`.<br>8. Built comprehensive test suite `server/test_file_crud.mjs` verifying 85 assertions across authentication, validation, upload, listing, retrieval, download streaming, renaming, moving, safe deletion, route aliases, and legacy record preservation (85/85 passed, 0 failures). Total passing test assertions across all suites: 249 passed, 0 failures. |
 | 2026-11-17 | **Folder Management API:**<br>1. Migrated PostgreSQL `folders` schema: added `owner_firebase_uid VARCHAR(128)`, `parent_folder_id BIGINT REFERENCES folders(id) ON DELETE RESTRICT`, `updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, dropped NOT NULL on legacy `owner_id`, added indexing on `owner_firebase_uid`, `parent_folder_id`, and partial unique indexes for root and child folder names.<br>2. Implemented `server/src/services/folder.service.js` with `createFolder`, `getFolders`, `getFolderById`, `renameFolder`, `deleteFolder`, `validateFolderName`, and `validateFolderId`. Uses parameterized queries and throws `AppError`.<br>3. Implemented `server/src/controllers/folder.controller.js` for all CRUD operations, binding caller to `req.user.uid`.<br>4. Implemented `server/src/routes/folder.routes.js` with `authMiddleware` protecting every endpoint.<br>5. Mounted `/api/folders` and `/folders` in `server/src/app.js`.<br>6. Implemented strict ownership checks (403 for non-owners, 404 for non-existent folders), nested parent ownership verification, duplicate folder name collision checks (409), and rejection of unsafe deletions for folders containing subfolders or files (400).<br>7. Created comprehensive automated test suite `server/test_folder_crud.mjs` verifying 58 assertions across authentication, validation, creation, nesting, listing, retrieval, renaming, safe/unsafe deletion, and route aliases (58/58 passed, 0 failures). Total passing test assertions across all suites: 189 passed, 0 failures. |
 | 2026-11-16 | **User Registration & Backend Synchronization (Feature 18):**<br>1. Built `client/src/app/signup.tsx` with name, email, password fields, display name update, backend synchronization, and rollback on failure.<br>2. Implemented `register` in `client/src/context/AuthContext.tsx` using `createUserWithEmailAndPassword()` and `updateProfile()`.<br>3. Implemented `POST /api/auth/register` and `/auth/register` in `server/src/controllers/auth.controller.js` and `server/src/routes/auth.routes.js`.<br>4. Extracted UID and email strictly from verified Firebase ID token via `authMiddleware`; prevented duplicate registration via UID and email checks (409 Conflict); added name validation (400 Bad Request).<br>5. Audited and eliminated unsafe password storage: altered PostgreSQL `users.password_hash` to NULL, removed password insertion from `createUser` in `user.service.js` and `user.controller.js`.<br>6. Added links between Login and Signup screens.<br>7. Updated `NavigationGuard` in `_layout.tsx` to handle `/signup` without tab bar.<br>8. Added comprehensive automated test suite `server/test_auth_register.mjs` (31 assertions passed, 0 failures). Total passing test assertions across all suites: 131 passed, 0 failures. |

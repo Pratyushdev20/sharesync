@@ -15,9 +15,10 @@ import {
 
 const fileRouter = Router();
 
-// Configure Multer with memory storage and size limit
+// Configure Multer with memory storage, path preservation for traversal detection, and size limit
 const upload = multer({
     storage: multer.memoryStorage(),
+    preservePath: true,
     limits: {
         fileSize: env.maxFileSize
     }

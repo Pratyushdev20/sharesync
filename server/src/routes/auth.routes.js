@@ -1,6 +1,6 @@
 import express from "express";
 import { authMiddleware } from "../middleware/auth.middleware.js";
-import { loginController, registerController } from "../controllers/auth.controller.js";
+import { loginController, registerController, sessionController } from "../controllers/auth.controller.js";
 
 const router = express.Router();
 
@@ -13,5 +13,6 @@ router.get("/", authMiddleware, (req, res) => {
 
 router.post("/login", authMiddleware, loginController);
 router.post("/register", authMiddleware, registerController);
+router.post("/session", authMiddleware, sessionController);
 
 export default router;

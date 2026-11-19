@@ -27,6 +27,10 @@ import { RenameModal } from '@/components/explorer/modals/RenameModal';
 import { MoveModal } from '@/components/explorer/modals/MoveModal';
 import { DeleteConfirmModal } from '@/components/explorer/modals/DeleteConfirmModal';
 import { ShareModal } from '@/components/explorer/modals/ShareModal';
+import { NoteEditorModal, NoteEditorTarget } from '@/components/notes/NoteEditorModal';
+import { SyncStatusBadge } from '@/components/SyncStatusBadge';
+import { FilePreviewModal } from '@/components/explorer/modals/FilePreviewModal';
+import { FileItem } from '@/types/explorer';
 
 const PERMISSION_LABEL: Record<string, string> = { owner: 'Owner', editor: 'Can edit', viewer: 'Can view' };
 
@@ -40,6 +44,8 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
   const theme = useTheme();
 
   const explorer = useFileExplorer(mode);
+  const [noteEditor, setNoteEditor] = React.useState<NoteEditorTarget | null>(null);
+  const [previewFile, setPreviewFile] = React.useState<FileItem | null>(null);
 
   const isShared = mode === 'shared';
   const atSharedTop = isShared && explorer.currentFolderId === null;
@@ -71,7 +77,7 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
   });
 
   const itemCountText = `${explorer.folders.length} folder${explorer.folders.length === 1 ? '' : 's'}, ${explorer.files.length} file${explorer.files.length === 1 ? '' : 's'}`;
-  const isEmpty = explorer.folders.length === 0 && explorer.files.length === 0;
+  const isEmpty = explorer.folders.length === 0 && explorer.files.length === 0 && explorer.notes.length === 0;
 
   return (
     <ThemedView style={styles.screenWrapper}>
@@ -102,6 +108,7 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
                     : 'You can view and download from this shared folder'
                 : 'Organize, upload and manage your cloud files'}
             </ThemedText>
+            <SyncStatusBadge />
           </View>
 
           {/* Breadcrumb Navigation & Action Buttons */}
@@ -266,6 +273,7 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
                         file={file}
                         viewMode={explorer.viewMode}
                         onDownload={explorer.handleDownloadFile}
+                        onOpen={setPreviewFile}
                         subtitle={sharedSubtitle('file', file.id)}
                         onShare={!isShared ? (f) => explorer.setItemToShare({ type: 'file', item: f }) : undefined}
                         onRename={
@@ -279,11 +287,56 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
                             ? (f) => explorer.setItemToDelete({ type: 'file', item: f })
                             : undefined
                         }
+                        onReplace={
+                          itemAccess('file', file.id) !== 'viewer'
+                            ? (f) => {
+                                explorer.setFileToReplace(f);
+                                explorer.setIsUploadModalOpen(true);
+                              }
+                            : undefined
+                        }
+                        onToggleOffline={explorer.offlineSupported ? explorer.toggleOffline : undefined}
+                        isOffline={explorer.offlineIds.has(String(file.id))}
                       />
                     ))}
                   </View>
                 </View>
               )}
+
+              {/* Notes Section */}
+              {explorer.notes.length > 0 && (
+                <View style={styles.section}>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionHeader}>
+                    NOTES & DOCUMENTS ({explorer.notes.length})
+                  </ThemedText>
+                  {explorer.notes.map((n) => (
+                    <Pressable
+                      key={n.id}
+                      onPress={() => setNoteEditor({ noteId: n.id })}
+                      style={({ pressed }) => [styles.noteRow, { backgroundColor: theme.backgroundElement }, pressed && { opacity: 0.8 }]}
+                    >
+                      <ThemedText style={{ fontSize: 16 }}>{n.kind === 'document' ? '📄' : '📝'}</ThemedText>
+                      <View style={{ flex: 1 }}>
+                        <ThemedText type="smallBold" numberOfLines={1} style={{ color: theme.text }}>{n.title}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={{ fontSize: 11 }}>
+                          {n.pending ? 'Waiting to sync • ' : ''}{n.preview || 'Empty'}
+                        </ThemedText>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {canAddHere && !explorer.loading && (
+            <View style={styles.noteActions}>
+              <Pressable onPress={() => setNoteEditor({ folderId: explorer.currentFolderId, kind: 'note' })} style={styles.noteButton}>
+                <ThemedText type="smallBold" style={{ color: '#1d4ed8' }}>+ Note here</ThemedText>
+              </Pressable>
+              <Pressable onPress={() => setNoteEditor({ folderId: explorer.currentFolderId, kind: 'document' })} style={styles.noteButton}>
+                <ThemedText type="smallBold" style={{ color: '#1d4ed8' }}>+ Document here</ThemedText>
+              </Pressable>
             </View>
           )}
         </View>
@@ -300,8 +353,26 @@ export function FileExplorerScreen({ mode = 'mine' }: { mode?: ExplorerMode }) {
         visible={explorer.isUploadModalOpen}
         uploading={explorer.uploading}
         uploadProgress={explorer.uploadProgress}
-        onClose={() => explorer.setIsUploadModalOpen(false)}
-        onUpload={explorer.handleUploadFile}
+        onClose={() => {
+          explorer.setIsUploadModalOpen(false);
+          explorer.setFileToReplace(null);
+        }}
+        onUpload={explorer.fileToReplace ? explorer.handleReplaceFile : explorer.handleUploadFile}
+        replaceTargetName={explorer.fileToReplace?.name ?? null}
+      />
+
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        onDownload={(f) => explorer.handleDownloadFile(f)}
+      />
+
+      <NoteEditorModal
+        target={noteEditor}
+        onClose={(changed) => {
+          setNoteEditor(null);
+          if (changed) explorer.refresh();
+        }}
       />
 
       <RenameModal
@@ -449,6 +520,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
+  },
+  noteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 8,
+  },
+  noteActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  noteButton: {
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    backgroundColor: '#eff6ff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   listContainer: {
     flexDirection: 'column',

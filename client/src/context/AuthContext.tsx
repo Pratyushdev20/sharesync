@@ -9,6 +9,7 @@ import {
   UserCredential,
 } from "firebase/auth";
 import { auth } from "@/config/firebase";
+import { unregisterPushNotificationsAsync } from "@/services/pushNotification.service";
 
 export interface AuthContextType {
   user: User | null;
@@ -58,6 +59,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async (): Promise<void> => {
     try {
+      if (auth.currentUser?.uid) {
+        await unregisterPushNotificationsAsync(auth.currentUser.uid).catch(() => {});
+      }
       await signOut(auth);
     } catch (error) {
       console.error("Sign out error:", error);

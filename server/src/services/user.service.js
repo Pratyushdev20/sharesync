@@ -69,12 +69,75 @@ export async function updateUser(userId, userdata) {
     return result.rows[0];
 }
 
+/**
+ * Deletes a user account and ALL data it owns, atomically:
+ * notes, files (DB rows; stored objects are removed after commit), folders (deepest first,
+ * because of the parent RESTRICT constraint), shares given and received, links, notifications,
+ * change feed, devices and push tokens. The Firebase Authentication account itself is managed
+ * by Firebase and is not deleted here.
+ */
 export async function deleteUser(userId) {
-    const result = await pool.query(
-        "DELETE FROM users WHERE id = $1 RETURNING id, name, email, created_at, firebase_uid",
-        [userId]
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    let storagePaths = [];
+    let deleted;
+    try {
+        await client.query("BEGIN");
+        const userRes = await client.query(
+            "SELECT id, name, email, created_at, firebase_uid FROM users WHERE id = $1 FOR UPDATE",
+            [userId]
+        );
+        if (userRes.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return undefined;
+        }
+        deleted = userRes.rows[0];
+        const uid = deleted.firebase_uid;
+
+        const files = await client.query(
+            "SELECT storage_path FROM files WHERE owner_id = $1 OR (owner_firebase_uid IS NOT NULL AND owner_firebase_uid = $2)",
+            [userId, uid]
+        );
+        storagePaths = files.rows.map((r) => r.storage_path).filter(Boolean);
+
+        if (uid) {
+            await client.query("DELETE FROM notes WHERE owner_firebase_uid = $1", [uid]);
+            await client.query("DELETE FROM file_shares WHERE shared_by_uid = $1 OR shared_with_uid = $1", [uid]);
+            await client.query("DELETE FROM folder_shares WHERE shared_by_uid = $1 OR shared_with_uid = $1", [uid]);
+            await client.query("DELETE FROM share_links WHERE created_by_uid = $1", [uid]);
+            await client.query("DELETE FROM notifications WHERE user_uid = $1", [uid]);
+            await client.query("DELETE FROM sync_events WHERE user_uid = $1", [uid]);
+            await client.query("DELETE FROM sync_devices WHERE user_uid = $1", [uid]);
+            await client.query("DELETE FROM push_tokens WHERE user_uid = $1", [uid]);
+        }
+        await client.query(
+            "DELETE FROM files WHERE owner_id = $1 OR (owner_firebase_uid IS NOT NULL AND owner_firebase_uid = $2)",
+            [userId, uid]
+        );
+        // Folders reference their parent with ON DELETE RESTRICT: remove leaves first
+        for (let i = 0; i < 1000; i++) {
+            const res = await client.query(
+                `DELETE FROM folders f
+                 WHERE (f.owner_id = $1 OR (f.owner_firebase_uid IS NOT NULL AND f.owner_firebase_uid = $2))
+                   AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_folder_id = f.id)`,
+                [userId, uid]
+            );
+            if (res.rowCount === 0) break;
+        }
+        await client.query("DELETE FROM users WHERE id = $1", [userId]);
+        await client.query("COMMIT");
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
+
+    // Remove stored (encrypted) objects only after the database commit succeeded
+    const { default: storageService } = await import("./storage.service.js");
+    for (const p of storagePaths) {
+        await storageService.deleteFile(p);
+    }
+    return deleted;
 }
 
 export async function getUserByFirebaseUid(firebaseUid, email = null) {
@@ -92,4 +155,51 @@ export async function getUserByFirebaseUid(firebaseUid, email = null) {
     }
 
     return result.rows[0];
+}
+/**
+ * Profile + usage statistics for the signed-in user (only their own data).
+ */
+export async function getProfile(firebaseUid) {
+    const userRes = await pool.query(
+        "SELECT id, name, email, created_at FROM users WHERE firebase_uid = $1",
+        [firebaseUid]
+    );
+    if (userRes.rows.length === 0) return null;
+    const stats = await pool.query(
+        `SELECT
+            (SELECT COUNT(*) FROM files WHERE owner_firebase_uid = $1)::int AS files,
+            (SELECT COALESCE(SUM(size), 0) FROM files WHERE owner_firebase_uid = $1)::bigint AS bytes,
+            (SELECT COUNT(*) FROM folders WHERE owner_firebase_uid = $1)::int AS folders,
+            (SELECT COUNT(*) FROM notes WHERE owner_firebase_uid = $1)::int AS notes,
+            ((SELECT COUNT(*) FROM file_shares WHERE shared_by_uid = $1) +
+             (SELECT COUNT(*) FROM folder_shares WHERE shared_by_uid = $1))::int AS shares_given,
+            ((SELECT COUNT(*) FROM file_shares WHERE shared_with_uid = $1) +
+             (SELECT COUNT(*) FROM folder_shares WHERE shared_with_uid = $1))::int AS shares_received,
+            (SELECT COUNT(*) FROM share_links WHERE created_by_uid = $1 AND is_active = true
+                AND (expires_at IS NULL OR expires_at > NOW()))::int AS active_links,
+            (SELECT COUNT(*) FROM sync_devices WHERE user_uid = $1)::int AS devices`,
+        [firebaseUid]
+    );
+    const s = stats.rows[0];
+    return {
+        ...userRes.rows[0],
+        stats: {
+            files: s.files,
+            storageBytes: Number(s.bytes),
+            folders: s.folders,
+            notes: s.notes,
+            sharesGiven: s.shares_given,
+            sharesReceived: s.shares_received,
+            activeLinks: s.active_links,
+            devices: s.devices,
+        },
+    };
+}
+
+export async function updateProfileName(firebaseUid, name) {
+    const res = await pool.query(
+        "UPDATE users SET name = $1 WHERE firebase_uid = $2 RETURNING id, name, email, created_at",
+        [name, firebaseUid]
+    );
+    return res.rows[0];
 }

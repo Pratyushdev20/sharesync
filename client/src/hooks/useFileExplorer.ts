@@ -1,8 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Alert, Platform } from 'react-native';
 import { folderService } from '@/services/folder.service';
 import { fileService, SelectedFile, NativeDownloadResult } from '@/services/file.service';
 import { shareService } from '@/services/share.service';
+import { Note, notesService } from '@/services/notes.service';
+import { offlineService } from '@/services/offline.service';
+import { useSyncEvents } from '@/context/SyncContext';
+import type { ApiError } from '@/services/api';
 import type { ShareTarget } from '@/components/explorer/modals/ShareModal';
 import {
   FileItem,
@@ -39,6 +43,11 @@ export function useFileExplorer(mode: ExplorerMode = 'mine') {
   // Sharing details for the top level of 'shared' mode, keyed "folder:<id>" / "file:<id>"
   const [sharedInfo, setSharedInfo] = useState<Record<string, SharedItemInfo>>({});
   const [itemToShare, setItemToShare] = useState<ShareTarget | null>(null);
+  // Notes in the open folder, files available offline, file receiving a new version
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [offlineIds, setOfflineIds] = useState<Set<string>>(new Set());
+  const [fileToReplace, setFileToReplace] = useState<FileItem | null>(null);
+  const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -116,6 +125,16 @@ export function useFileExplorer(mode: ExplorerMode = 'mine') {
         setFiles(fetchedFiles);
         setCurrentAccess('owner');
       }
+      // Notes that live in this folder (or the workspace root); none at the "Shared with me" top level
+      if (mode === 'shared' && currentFolderId === null) {
+        setNotes([]);
+      } else {
+        notesService
+          .list({ folderId: currentFolderId })
+          .then((r) => setNotes(r.notes))
+          .catch(() => setNotes([]));
+      }
+      offlineService.list().then((l) => setOfflineIds(new Set(l.map((e) => e.id)))).catch(() => {});
     } catch (err: any) {
       console.error('Error loading directory contents:', err);
       if (mode === 'shared' && (err?.status === 403 || err?.status === 404)) {
@@ -132,6 +151,45 @@ export function useFileExplorer(mode: ExplorerMode = 'mine') {
   useEffect(() => {
     loadDirectory();
   }, [loadDirectory]);
+
+  // ---------------------------------------------------------------------------
+  // Real-time sync: refresh when something in the open folder changes on any device
+  // ---------------------------------------------------------------------------
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => loadDirectory(true), 250);
+  }, [loadDirectory]);
+  useEffect(() => () => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+  }, []);
+
+  useSyncEvents((event) => {
+    if (event.type === 'reset') {
+      scheduleRefresh();
+      return;
+    }
+    const e = event as import('@/services/sync.service').SyncEvent;
+    const here = currentFolderId;
+    const previousFolder = e.payload?.previousFolderId ?? null;
+    const touchesHere =
+      String(e.folderId ?? '') === String(here ?? '') ||
+      String(previousFolder ?? '') === String(here ?? '') ||
+      (e.resourceType === 'folder' && here !== null && e.resourceId === here);
+
+    // The open folder itself was deleted or access to it was removed
+    if (here !== null && e.resourceId === here && (e.type === 'folder.deleted' || e.type === 'share.revoked')) {
+      setNotice({ type: 'error', message: e.type === 'folder.deleted' ? 'This folder was deleted on another device.' : 'Your access to this folder was removed.' });
+      setCurrentFolderId(null);
+      setBreadcrumbs((prev) => prev.slice(0, 1));
+      return;
+    }
+    if (mode === 'shared' && here === null && e.type.startsWith('share.')) {
+      scheduleRefresh();
+      return;
+    }
+    if (touchesHere && !e.type.startsWith('link.')) scheduleRefresh();
+  });
 
   /**
    * Loads all folders for folder-tree selection (e.g. Move modal).
@@ -308,6 +366,53 @@ export function useFileExplorer(mode: ExplorerMode = 'mine') {
   };
 
   /**
+   * Uploads a new version of an existing file. Conflict-safe: if the file changed on another
+   * device since it was loaded, the server refuses (409) and the list is refreshed.
+   */
+  const handleReplaceFile = async (file: SelectedFile): Promise<void> => {
+    if (!fileToReplace) return;
+    setUploading(true);
+    setUploadProgress({ loaded: 0, total: 100, percent: 0 });
+    try {
+      await fileService.replaceFile(fileToReplace.id, file, fileToReplace.version, (p) => setUploadProgress(p));
+      setNotice({ type: 'success', message: `New version of "${fileToReplace.name}" uploaded.` });
+      setFileToReplace(null);
+      setIsUploadModalOpen(false);
+      await loadDirectory(true);
+    } catch (err) {
+      const e = err as ApiError;
+      if (e.code === 'CONFLICT') {
+        await loadDirectory(true);
+        throw new Error('This file was changed on another device. The list was refreshed — check the latest version and try again.');
+      }
+      throw err;
+    } finally {
+      setUploading(false);
+      setUploadProgress(null);
+    }
+  };
+
+  /** Keeps (or stops keeping) a private copy on this device for offline use. */
+  const toggleOffline = async (file: FileItem): Promise<void> => {
+    setOfflineBusyId(file.id);
+    try {
+      if (offlineIds.has(String(file.id))) {
+        await offlineService.remove(file.id);
+        setNotice({ type: 'success', message: `"${file.name}" is no longer kept offline.` });
+      } else {
+        await offlineService.add(file);
+        setNotice({ type: 'success', message: `"${file.name}" is now available offline.` });
+      }
+      const l = await offlineService.list();
+      setOfflineIds(new Set(l.map((e) => e.id)));
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err?.message || 'Could not update offline copy.' });
+    } finally {
+      setOfflineBusyId(null);
+    }
+  };
+
+  /**
    * Filtered and sorted folders.
    */
   const filteredFolders = useMemo(() => {
@@ -355,6 +460,14 @@ export function useFileExplorer(mode: ExplorerMode = 'mine') {
 
   return {
     mode,
+    notes,
+    offlineIds,
+    offlineBusyId,
+    offlineSupported: offlineService.isSupported(),
+    toggleOffline,
+    fileToReplace,
+    setFileToReplace,
+    handleReplaceFile,
     currentAccess,
     sharedInfo,
     itemToShare,

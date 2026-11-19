@@ -11,6 +11,34 @@ import {
 } from "../services/share.service.js";
 import { getLinkInfo, getLinkFolderContents, getLinkFileForDownload } from "../services/link.service.js";
 import { sendFileStream } from "../utils/sendFile.js";
+import { getUserName, publishChange, recordActivity } from "../services/events.service.js";
+import { createNotifications } from "../services/notification.service.js";
+
+const PERMISSION_TEXT = { viewer: "view", editor: "edit" };
+
+/** Tells the recipient (and the owner's other devices) that sharing changed. */
+async function announceShare({ ownerUid, recipientUid, eventType, resourceType, resourceId, resourceName, permission, notification }) {
+    await publishChange({
+        audience: [ownerUid, recipientUid],
+        actorUid: ownerUid,
+        eventType,
+        resourceType,
+        resourceId,
+        ownerUid,
+        payload: { name: resourceName, permission: permission || null, sharedWithUid: recipientUid },
+    });
+    if (notification) {
+        await createNotifications([{
+            userUid: recipientUid,
+            actorUid: ownerUid,
+            type: eventType,
+            resourceType,
+            resourceId,
+            data: { permission: permission || null },
+            ...notification,
+        }]);
+    }
+}
 
 /** Link expiry choices the API accepts (hours). null = never expires. */
 const MAX_LINK_HOURS = 24 * 365;
@@ -37,6 +65,20 @@ export async function shareWithUserController(req, res, next) {
             recipientEmail: email,
             permission: permission || "viewer"
         });
+        const ownerName = await getUserName(req.user.uid);
+        await announceShare({
+            ownerUid: req.user.uid,
+            recipientUid: share.sharedWithUid,
+            eventType: "share.created",
+            resourceType: share.resourceType,
+            resourceId: share.resourceId,
+            resourceName: share.resourceName,
+            permission: share.permission,
+            notification: {
+                title: `${ownerName} shared a ${share.resourceType} with you`,
+                body: `"${share.resourceName}" - you can ${PERMISSION_TEXT[share.permission]}`,
+            },
+        });
         res.status(201).json({ success: true, message: `Shared with ${share.recipientName || share.recipientEmail}`, data: share });
     } catch (error) {
         if (error.statusCode === 404 && /Recipient/.test(error.message)) {
@@ -62,6 +104,20 @@ export async function updateShareController(req, res, next) {
             shareId: req.params.shareId,
             permission: req.body?.permission
         });
+        const ownerName = await getUserName(req.user.uid);
+        await announceShare({
+            ownerUid: req.user.uid,
+            recipientUid: updated.shared_with_uid,
+            eventType: "share.updated",
+            resourceType: req.params.type,
+            resourceId: updated.resource_id,
+            resourceName: updated.resource_name,
+            permission: updated.permission,
+            notification: {
+                title: `${ownerName} changed your access`,
+                body: `"${updated.resource_name}" - you can now ${PERMISSION_TEXT[updated.permission]}`,
+            },
+        });
         res.status(200).json({ success: true, message: "Permission updated", data: updated });
     } catch (error) {
         next(error);
@@ -76,6 +132,21 @@ export async function revokeShareController(req, res, next) {
             resourceType: req.params.type,
             shareId: req.params.shareId
         });
+        if (result.revoked) {
+            const ownerName = await getUserName(req.user.uid);
+            await announceShare({
+                ownerUid: req.user.uid,
+                recipientUid: result.revoked.sharedWithUid,
+                eventType: "share.revoked",
+                resourceType: result.revoked.resourceType,
+                resourceId: result.revoked.resourceId,
+                resourceName: result.revoked.resourceName,
+                notification: {
+                    title: `${ownerName} removed your access`,
+                    body: `"${result.revoked.resourceName}" is no longer shared with you`,
+                },
+            });
+        }
         res.status(200).json({ success: true, message: result.message });
     } catch (error) {
         next(error);
@@ -142,6 +213,15 @@ export async function createLinkController(req, res, next) {
             password: password || null
         });
 
+        await publishChange({
+            audience: [req.user.uid],
+            actorUid: req.user.uid,
+            eventType: "link.created",
+            resourceType: shareLink.resourceType,
+            resourceId: shareLink.resourceId,
+            ownerUid: req.user.uid,
+            payload: { name: shareLink.resourceName, linkId: String(shareLink.id), hasPassword: shareLink.hasPassword, expiresAt: shareLink.expiresAt },
+        });
         res.status(201).json({
             success: true,
             message: "Share link created",
@@ -156,6 +236,14 @@ export async function createLinkController(req, res, next) {
 export async function revokeLinkController(req, res, next) {
     try {
         const result = await revokeShareLink({ ownerUid: req.user.uid, linkId: req.params.linkId });
+        await publishChange({
+            audience: [req.user.uid],
+            actorUid: req.user.uid,
+            eventType: "link.revoked",
+            resourceType: "link",
+            resourceId: req.params.linkId,
+            ownerUid: req.user.uid,
+        });
         res.status(200).json({ success: true, message: result.message });
     } catch (error) {
         next(error);
@@ -200,6 +288,13 @@ export async function linkDownloadController(req, res, next) {
             readLinkPassword(req),
             req.query.file_id
         );
+        recordActivity({
+            actorUid: req.user?.uid || null,
+            action: "link.downloaded",
+            resourceType: "file",
+            resourceId: download.fileRecord.id,
+            metadata: { name: download.fileRecord.name, anonymous: !req.user },
+        });
         sendFileStream(res, next, download);
     } catch (error) {
         next(error);

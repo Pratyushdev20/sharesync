@@ -12,6 +12,8 @@ interface UploadModalProps {
   uploadProgress: UploadProgress | null;
   onClose: () => void;
   onUpload: (file: SelectedFile) => Promise<void>;
+  /** When set, the modal uploads a new version of this file instead of a new file */
+  replaceTargetName?: string | null;
 }
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -22,6 +24,7 @@ export function UploadModal({
   uploadProgress,
   onClose,
   onUpload,
+  replaceTargetName,
 }: UploadModalProps) {
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,10 +103,12 @@ export function UploadModal({
       <View style={styles.backdrop}>
         <View style={[styles.modalCard, { backgroundColor: theme.background, borderColor: '#e2e8f0' }]}>
           <ThemedText type="subtitle" style={[styles.modalTitle, { color: theme.text }]}>
-            Upload File
+            {replaceTargetName ? 'Upload new version' : 'Upload File'}
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary" style={styles.modalSubtitle}>
-            Select a document, image, audio, video or archive (Max 50MB).
+            {replaceTargetName
+              ? `Replaces the content of "${replaceTargetName}" for everyone who has access. Max 50MB.`
+              : 'Select a document, image, audio, video or archive (Max 50MB).'}
           </ThemedText>
 
           {/* Hidden Web File Input */}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,10 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "@/config/firebase";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { takeAuthNotice } from "@/services/googleAuth";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -19,6 +23,25 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const router = useRouter();
   const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:2000";
+
+  // Message left by an automatic sign-out (e.g. Google email already used by a password account)
+  useEffect(() => {
+    const notice = takeAuthNotice();
+    if (notice) setMessage(notice);
+  }, []);
+
+  async function handleForgotPassword() {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setMessage("Enter your email above, then tap \"Forgot password?\" again.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+    } catch {
+      // Same message either way so this cannot be used to discover which emails have accounts
+    }
+    setMessage("If an account exists for this email, a password reset link has been sent.");
+  }
 
   async function handleLogin() {
     if (!email.trim() || !password) {
@@ -92,6 +115,13 @@ export default function LoginScreen() {
         </Text>
       </Pressable>
 
+      <Pressable onPress={handleForgotPassword} style={{ marginTop: 10 }}>
+        <Text style={styles.linkText}>Forgot password?</Text>
+      </Pressable>
+
+      <Text style={styles.orText}>or</Text>
+      <GoogleSignInButton onError={(m) => setMessage(m)} />
+
       {!!message && <Text style={styles.message}>{message}</Text>}
 
 
@@ -149,6 +179,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
     textAlign: "center",
     maxWidth: 400,
+  },
+  orText: {
+    color: "#94a3b8",
+    marginTop: 14,
+    fontSize: 13,
   },
   footer: {
     flexDirection: "row",

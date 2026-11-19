@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -8,12 +8,47 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
-import { ExternalLink } from "@/components/external-link";
+import { useSync, useSyncEvents } from "@/context/SyncContext";
+import { SyncStatusBadge } from "@/components/SyncStatusBadge";
+import { OfflineEntry, offlineService } from "@/services/offline.service";
+import { syncApi } from "@/services/sync.service";
+import { ProfileModal } from "@/components/profile/ProfileModal";
 
 export default function HomeScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
+  const { unreadCount, isOnline } = useSync();
+  const [offline, setOffline] = useState<OfflineEntry[]>([]);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [offlineMsg, setOfflineMsg] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  const loadExtras = useCallback(() => {
+    offlineService.list().then(setOffline).catch(() => {});
+    syncApi.listDevices().then(setDevices).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadExtras();
+  }, [loadExtras]);
+
+  useSyncEvents((e) => {
+    if (e.type === "reset" || ("resourceType" in e && e.resourceType === "file")) loadExtras();
+  });
+
+  async function openOffline(entry: OfflineEntry) {
+    try {
+      await offlineService.open(entry);
+    } catch (err: any) {
+      setOfflineMsg(err?.message || "Could not open the file.");
+    }
+  }
+
+  async function removeOffline(entry: OfflineEntry) {
+    await offlineService.remove(entry.id);
+    loadExtras();
+  }
 
   async function handleLogout() {
     try {
@@ -51,12 +86,59 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <Pressable
-        style={styles.filesButton}
-        onPress={() => router.push("/explore")}
-      >
+      <View style={styles.card}>
+        <Text style={styles.cardHeader}>Sync</Text>
+        <SyncStatusBadge />
+        <Text style={styles.hint}>
+          {isOnline
+            ? "Changes from your other devices appear automatically."
+            : "You're offline. Notes you edit are saved here and sync when you reconnect."}
+        </Text>
+        {devices.length > 0 && (
+          <Text style={styles.hint}>
+            {devices.length} device{devices.length === 1 ? "" : "s"} synced with this account
+          </Text>
+        )}
+      </View>
+
+      <Pressable style={styles.filesButton} onPress={() => router.push("/explore")}>
         <Text style={styles.filesButtonText}>Open File Explorer →</Text>
       </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => router.push("/notifications")}>
+        <Text style={styles.secondaryButtonText}>
+          🔔 Notifications{unreadCount > 0 ? ` (${unreadCount} unread)` : ""}
+        </Text>
+      </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => setProfileOpen(true)}>
+        <Text style={styles.secondaryButtonText}>👤 Profile & account</Text>
+      </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => router.push("/notes")}>
+        <Text style={styles.secondaryButtonText}>📝 Notes & documents</Text>
+      </Pressable>
+
+      {offlineService.isSupported() && (
+        <View style={styles.card}>
+          <Text style={styles.cardHeader}>Available offline</Text>
+          {offline.length === 0 ? (
+            <Text style={styles.hint}>
+              Tap 📥 on a file in Files to keep a copy on this phone. It stays up to date automatically.
+            </Text>
+          ) : (
+            offline.map((entry) => (
+              <View key={entry.id} style={styles.offlineRow}>
+                <Pressable style={{ flex: 1 }} onPress={() => openOffline(entry)}>
+                  <Text style={styles.value} numberOfLines={1}>📄 {entry.name}</Text>
+                  <Text style={styles.small}>Version {entry.version} • checked {new Date(entry.checkedAt).toLocaleString()}</Text>
+                </Pressable>
+                <Pressable onPress={() => removeOffline(entry)} hitSlop={8}>
+                  <Text style={styles.removeText}>Remove</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+          {!!offlineMsg && <Text style={styles.hint}>{offlineMsg}</Text>}
+        </View>
+      )}
 
       <Pressable
         style={[styles.logoutButton, loggingOut && styles.buttonDisabled]}
@@ -68,6 +150,7 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
+      <ProfileModal visible={profileOpen} onClose={() => { setProfileOpen(false); loadExtras(); }} />
     </ScrollView>
   );
 }
@@ -124,6 +207,44 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontSize: 14,
     flexShrink: 1,
+  },
+  hint: {
+    color: "#64748b",
+    fontSize: 13,
+    marginTop: 6,
+  },
+  small: {
+    color: "#64748b",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  offlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  removeText: {
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    backgroundColor: "#eff6ff",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    width: "100%",
+    maxWidth: 480,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  secondaryButtonText: {
+    color: "#1d4ed8",
+    fontWeight: "600",
   },
   filesButton: {
     backgroundColor: "#2563eb",

@@ -6,14 +6,14 @@ import {
   TabTriggerSlotProps,
   TabListProps,
 } from 'expo-router/ui';
-import { SymbolView } from 'expo-symbols';
 import { Pressable, useColorScheme, View, StyleSheet } from 'react-native';
 
-import { ExternalLink } from './external-link';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
 import { Colors, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useSync } from '@/context/SyncContext';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 export default function AppTabs() {
   return (
@@ -30,10 +30,24 @@ export default function AppTabs() {
           <TabTrigger name="shared" href="/shared" asChild>
             <TabButton>Shared</TabButton>
           </TabTrigger>
+          <TabTrigger name="notes" href="/notes" asChild>
+            <TabButton>Notes</TabButton>
+          </TabTrigger>
+          <TabTrigger name="notifications" href="/notifications" asChild>
+            <TabButton>
+              <AlertsLabel />
+            </TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
   );
+}
+
+/** "Alerts (3)" with the live unread count */
+function AlertsLabel() {
+  const { unreadCount } = useSync();
+  return <>{unreadCount > 0 ? `Alerts (${unreadCount})` : 'Alerts'}</>;
 }
 
 export function TabButton({ children, isFocused, ...props }: TabTriggerSlotProps) {
@@ -64,16 +78,9 @@ export function CustomTabList(props: TabListProps) {
 
         {props.children}
 
-        <ExternalLink href="https://docs.expo.dev" asChild>
-          <Pressable style={styles.externalPressable}>
-            <ThemedText type="link">Docs</ThemedText>
-            <SymbolView
-              tintColor={colors.text}
-              name={{ ios: 'arrow.up.right.square', web: 'link' }}
-              size={12}
-            />
-          </Pressable>
-        </ExternalLink>
+        <View style={styles.externalPressable}>
+          <SyncStatusBadge compact />
+        </View>
       </ThemedView>
     </View>
   );

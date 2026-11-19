@@ -455,7 +455,7 @@ export async function revokeUserShare({ ownerUid, resourceType, shareId }) {
 
     if (resourceType === "file") {
         const shareRes = await pool.query(
-            `SELECT fs.id, f.owner_firebase_uid 
+            `SELECT fs.id, fs.shared_with_uid, fs.permission, f.id AS resource_id, f.name, f.folder_id, f.owner_firebase_uid
              FROM file_shares fs
              JOIN files f ON fs.file_id = f.id
              WHERE fs.id = $1`,
@@ -471,10 +471,15 @@ export async function revokeUserShare({ ownerUid, resourceType, shareId }) {
         }
 
         await pool.query("DELETE FROM file_shares WHERE id = $1", [validShareId]);
-        return { success: true, message: "File share revoked successfully" };
+        const r = shareRes.rows[0];
+        return {
+            success: true,
+            message: "File share revoked successfully",
+            revoked: { resourceType: "file", resourceId: r.resource_id, resourceName: r.name, sharedWithUid: r.shared_with_uid, folderId: r.folder_id }
+        };
     } else if (resourceType === "folder") {
         const shareRes = await pool.query(
-            `SELECT fs.id, f.owner_firebase_uid 
+            `SELECT fs.id, fs.shared_with_uid, fs.permission, f.id AS resource_id, f.name, f.parent_folder_id, f.owner_firebase_uid
              FROM folder_shares fs
              JOIN folders f ON fs.folder_id = f.id
              WHERE fs.id = $1`,
@@ -490,7 +495,12 @@ export async function revokeUserShare({ ownerUid, resourceType, shareId }) {
         }
 
         await pool.query("DELETE FROM folder_shares WHERE id = $1", [validShareId]);
-        return { success: true, message: "Folder share revoked successfully" };
+        const r = shareRes.rows[0];
+        return {
+            success: true,
+            message: "Folder share revoked successfully",
+            revoked: { resourceType: "folder", resourceId: r.resource_id, resourceName: r.name, sharedWithUid: r.shared_with_uid, folderId: r.parent_folder_id }
+        };
     } else {
         throw new AppError("Invalid resource type. Must be 'file' or 'folder'", 400);
     }
@@ -823,7 +833,8 @@ export async function updateUserSharePermission({ ownerUid, resourceType, shareI
          RETURNING id, ${fk} AS resource_id, shared_with_uid, permission, updated_at`,
         [permission, String(shareId).trim()]
     );
-    return updated.rows[0];
+    const nameRes = await pool.query(`SELECT name FROM ${resourceTable} WHERE id = $1`, [updated.rows[0].resource_id]);
+    return { ...updated.rows[0], resource_name: nameRes.rows[0]?.name || "" };
 }
 
 /**

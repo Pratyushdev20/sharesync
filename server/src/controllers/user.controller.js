@@ -5,8 +5,13 @@ import {
     getUserById,
     updateUser,
     deleteUser,
-    getUserByFirebaseUid
+    getUserByFirebaseUid,
+    getProfile,
+    updateProfileName
 } from "../services/user.service.js";
+import { getAuth } from "firebase-admin/auth";
+import { recordActivity } from "../services/events.service.js";
+import log from "../utils/log.js";
 import { getVerifiedEmail } from "../utils/authHelpers.js";
 
 /**
@@ -155,6 +160,81 @@ export async function deleteUserController(req, res, next) {
             success: true,
             message: "User deleted successfully",
             data: result
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+// ---------------------------------------------------------------------------
+// /api/users/me — the signed-in user's own profile (no ids in the URL → no IDOR surface)
+// ---------------------------------------------------------------------------
+
+/** Account deletion requires a sign-in within this window (seconds). */
+const REAUTH_WINDOW_SECONDS = 5 * 60;
+
+/** GET /api/users/me */
+export async function getMeController(req, res, next) {
+    try {
+        const profile = await getProfile(req.user.uid);
+        if (!profile) {
+            throw new AppError("Account not found. Please finish signing up.", 404, "REGISTRATION_REQUIRED");
+        }
+        res.status(200).json({
+            success: true,
+            data: {
+                ...profile,
+                emailVerified: req.user.email_verified === true,
+                provider: req.user.firebase?.sign_in_provider || null,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+/** PATCH /api/users/me  { name } */
+export async function updateMeController(req, res, next) {
+    try {
+        const updated = await updateProfileName(req.user.uid, req.body.name);
+        if (!updated) throw new AppError("Account not found", 404);
+        recordActivity({ actorUid: req.user.uid, action: "profile.updated", ownerUid: req.user.uid, metadata: { field: "name" } });
+        res.status(200).json({ success: true, message: "Profile updated", data: updated });
+    } catch (error) {
+        next(error);
+    }
+}
+
+/**
+ * DELETE /api/users/me
+ * Deletes all ShareSync data AND the Firebase Authentication account.
+ * Requires a recent sign-in (auth_time within 5 minutes) so a stolen or old session token
+ * cannot destroy an account; otherwise 401 REAUTH_REQUIRED.
+ */
+export async function deleteMeController(req, res, next) {
+    try {
+        const authTime = Number(req.user.auth_time);
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        if (!authTime || nowSeconds - authTime > REAUTH_WINDOW_SECONDS) {
+            throw new AppError("Please sign in again to confirm it's you, then delete your account.", 401, "REAUTH_REQUIRED");
+        }
+
+        const user = await getUserByFirebaseUid(req.user.uid);
+        if (user) {
+            await deleteUser(user.id);
+        }
+
+        let firebaseDeleted = false;
+        try {
+            await getAuth().deleteUser(req.user.uid);
+            firebaseDeleted = true;
+        } catch (err) {
+            log.warn("account.firebase_delete_failed", { err });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Your account and all your data were deleted",
+            data: { dataDeleted: Boolean(user), firebaseDeleted },
         });
     } catch (error) {
         next(error);

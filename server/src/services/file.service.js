@@ -8,6 +8,8 @@ import {
     validateFileContent
 } from "../utils/fileValidator.js";
 import { requireFileAccess, requireFolderAccess } from "./access.service.js";
+import { audienceForFile, getUserName, publishChange } from "./events.service.js";
+import { createNotifications } from "./notification.service.js";
 
 /**
  * Ensures a PostgreSQL user record exists for the given Firebase UID
@@ -49,7 +51,7 @@ export async function getOrCreatePostgresUserId(ownerUid, email = null, name = n
     return insertRes.rows[0].id;
 }
 
-const PUBLIC_FILE_FIELDS = "id, name, size, mime_type, folder_id, created_at, updated_at";
+const PUBLIC_FILE_FIELDS = "id, name, size, mime_type, folder_id, version, created_at, updated_at";
 
 /** Removes internal fields before a file record is sent to a client. */
 function toPublicFile(file, permission) {
@@ -59,6 +61,7 @@ function toPublicFile(file, permission) {
         size: file.size,
         mime_type: file.mime_type,
         folder_id: file.folder_id,
+        version: file.version,
         created_at: file.created_at,
         updated_at: file.updated_at
     };
@@ -141,6 +144,7 @@ export async function uploadFile(callerUid, userMeta, fileData, { folder_id = nu
         buffer: fileData.buffer
     });
 
+    let created;
     try {
         const result = await pool.query(
             `INSERT INTO files (name, size, mime_type, storage_path, owner_id, folder_id, owner_firebase_uid,
@@ -149,8 +153,7 @@ export async function uploadFile(callerUid, userMeta, fileData, { folder_id = nu
              RETURNING ${PUBLIC_FILE_FIELDS}`,
             [validName, size, verifiedMimeType, storagePath, ownerId, validFolderId, ownerUid, callerUid, encrypted === true]
         );
-
-        return result.rows[0];
+        created = result.rows[0];
     } catch (dbErr) {
         // Rollback disk write if DB insert fails
         await storageService.deleteFile(storagePath);
@@ -159,6 +162,114 @@ export async function uploadFile(callerUid, userMeta, fileData, { folder_id = nu
         }
         throw dbErr;
     }
+
+    await announce({
+        actorUid: callerUid,
+        eventType: "file.created",
+        file: { ...created, owner_firebase_uid: ownerUid },
+        notifyVerb: "uploaded",
+    });
+    return created;
+}
+
+/**
+ * Publishes a file change to everyone with access and, for shared content,
+ * notifies the other people involved ("Rahul uploaded report.pdf").
+ */
+async function announce({ actorUid, eventType, file, audience, notifyVerb = null, extra = {} }) {
+    const who = audience || await audienceForFile(file.id, file.folder_id, file.owner_firebase_uid);
+    await publishChange({
+        audience: who,
+        actorUid,
+        eventType,
+        resourceType: "file",
+        resourceId: file.id,
+        folderId: file.folder_id,
+        ownerUid: file.owner_firebase_uid,
+        payload: { name: file.name, version: file.version ?? null, size: file.size ?? null, ...extra },
+    });
+    if (notifyVerb) {
+        const others = [...who].filter((uid) => uid !== actorUid);
+        if (others.length > 0) {
+            const actorName = await getUserName(actorUid);
+            await createNotifications(others.map((userUid) => ({
+                userUid,
+                actorUid,
+                type: eventType,
+                title: `${actorName} ${notifyVerb} a file`,
+                body: `"${file.name}"`,
+                resourceType: "file",
+                resourceId: file.id,
+                data: { folderId: file.folder_id === null || file.folder_id === undefined ? null : String(file.folder_id) },
+            })));
+        }
+    }
+}
+
+/** Rejects stale writes: the client sends the version it last saw. */
+function assertVersion(current, expectedVersion, label = "file") {
+    if (expectedVersion === undefined || expectedVersion === null || expectedVersion === "") return;
+    const expected = Number(expectedVersion);
+    if (!Number.isInteger(expected) || expected < 1) {
+        throw new AppError("expected_version must be a positive integer", 400, "VALIDATION_ERROR");
+    }
+    if (expected !== Number(current.version)) {
+        const err = new AppError(`This ${label} was changed on another device. Refresh to see the latest version.`, 409, "CONFLICT");
+        err.details = { currentVersion: Number(current.version) };
+        throw err;
+    }
+}
+
+/**
+ * Replaces a file's content with a new version (owner or editor).
+ * Conflict detection: pass `expectedVersion`; 409 CONFLICT if someone else changed it first.
+ * The update is atomic (`WHERE version = $expected`), and the old stored object is removed
+ * only after the database points at the new one.
+ */
+export async function replaceFileContent(fileId, callerUid, fileData, { expectedVersion } = {}) {
+    const validId = validateFileId(fileId);
+    if (!fileData || !fileData.buffer) {
+        throw new AppError("No file provided for upload", 400);
+    }
+    const { file } = await requireFileAccess(callerUid, validId, "editor", "update this file");
+    assertVersion(file, expectedVersion);
+
+    const { verifiedMimeType, size } = validateFileContent(
+        fileData.buffer,
+        fileData.mimetype,
+        file.name,
+        env.maxFileSize
+    );
+
+    const { storagePath, encrypted } = await storageService.saveFile({
+        ownerUid: file.owner_firebase_uid,
+        filename: file.name,
+        buffer: fileData.buffer
+    });
+
+    const result = await pool.query(
+        `UPDATE files
+         SET storage_path = $1, size = $2, mime_type = $3, is_encrypted = $4, uploaded_by_uid = $5,
+             version = version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $6 AND version = $7
+         RETURNING ${PUBLIC_FILE_FIELDS}, owner_firebase_uid`,
+        [storagePath, size, verifiedMimeType, encrypted === true, callerUid, validId, file.version]
+    );
+
+    if (result.rows.length === 0) {
+        await storageService.deleteFile(storagePath);
+        const err = new AppError("This file was changed on another device. Refresh to see the latest version.", 409, "CONFLICT");
+        throw err;
+    }
+
+    if (file.storage_path && file.storage_path !== storagePath) {
+        await storageService.deleteFile(file.storage_path);
+    }
+
+    const updated = result.rows[0];
+    await announce({ actorUid: callerUid, eventType: "file.updated", file: updated, notifyVerb: "updated", extra: { contentChanged: true } });
+    delete updated.owner_firebase_uid;
+    return updated;
 }
 
 /**
@@ -239,17 +350,21 @@ export async function openFileStream(file) {
 export async function getFileForDownload(fileId, callerUid) {
     const validId = validateFileId(fileId);
     const { file } = await requireFileAccess(callerUid, validId, "viewer", "download this file");
-    return openFileStream(file);
+    const download = await openFileStream(file);
+    download.fileRecord.version = file.version;
+    download.ownerUid = file.owner_firebase_uid;
+    return download;
 }
 
 /**
- * Renames a file (owner or editor).
+ * Renames a file (owner or editor). Optional `expectedVersion` enables conflict detection.
  */
-export async function renameFile(fileId, callerUid, newName) {
+export async function renameFile(fileId, callerUid, newName, { expectedVersion } = {}) {
     const validId = validateFileId(fileId);
     const validName = validateFileName(newName);
 
     const { file, permission } = await requireFileAccess(callerUid, validId, "editor", "rename this file");
+    assertVersion(file, expectedVersion);
 
     if (file.name === validName) {
         return toPublicFile(file, permission);
@@ -259,22 +374,33 @@ export async function renameFile(fileId, callerUid, newName) {
 
     const result = await pool.query(
         `UPDATE files
-         SET name = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2
+         SET name = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND version = $3
          RETURNING ${PUBLIC_FILE_FIELDS}`,
-        [validName, validId]
+        [validName, validId, file.version]
     );
+    if (result.rows.length === 0) {
+        throw new AppError("This file was changed on another device. Refresh to see the latest version.", 409, "CONFLICT");
+    }
 
-    return result.rows[0];
+    const updated = result.rows[0];
+    await announce({
+        actorUid: callerUid,
+        eventType: "file.updated",
+        file: { ...updated, owner_firebase_uid: file.owner_firebase_uid },
+        extra: { previousName: file.name },
+    });
+    return updated;
 }
 
 /**
  * Moves a file between the owner's folders (or to root). Owner only:
  * moving can take a file out of a shared folder, so shared users may not do it.
  */
-export async function moveFile(fileId, callerUid, targetFolderId) {
+export async function moveFile(fileId, callerUid, targetFolderId, { expectedVersion } = {}) {
     const validId = validateFileId(fileId);
     const { file } = await requireFileAccess(callerUid, validId, "owner", "move this file");
+    assertVersion(file, expectedVersion);
 
     let validTargetId = null;
 
@@ -297,30 +423,51 @@ export async function moveFile(fileId, callerUid, targetFolderId) {
 
     await assertNameAvailable(callerUid, validTargetId, file.name, validId, "A file with this name already exists in the target folder");
 
+    // People who could see it in the old location must also learn that it left
+    const audience = await audienceForFile(file.id, file.folder_id, file.owner_firebase_uid);
+
     const result = await pool.query(
         `UPDATE files
-         SET folder_id = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2
+         SET folder_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND version = $3
          RETURNING ${PUBLIC_FILE_FIELDS}`,
-        [validTargetId, validId]
+        [validTargetId, validId, file.version]
     );
+    if (result.rows.length === 0) {
+        throw new AppError("This file was changed on another device. Refresh to see the latest version.", 409, "CONFLICT");
+    }
 
-    return result.rows[0];
+    const moved = result.rows[0];
+    (await audienceForFile(moved.id, moved.folder_id, file.owner_firebase_uid)).forEach((uid) => audience.add(uid));
+    await announce({
+        actorUid: callerUid,
+        eventType: "file.moved",
+        file: { ...moved, owner_firebase_uid: file.owner_firebase_uid },
+        audience,
+        extra: { previousFolderId: file.folder_id === null ? null : String(file.folder_id) },
+    });
+    return moved;
 }
 
 /**
- * Deletes a file from database and disk storage (owner or editor).
+ * Deletes a file from database and storage (owner or editor).
  * The database row is removed first so a storage failure never leaves a row pointing at nothing.
  */
-export async function deleteFile(fileId, callerUid) {
+export async function deleteFile(fileId, callerUid, { expectedVersion } = {}) {
     const validId = validateFileId(fileId);
     const { file } = await requireFileAccess(callerUid, validId, "editor", "delete this file");
+    assertVersion(file, expectedVersion);
+
+    // Compute the audience before the shares disappear with the row (ON DELETE CASCADE)
+    const audience = await audienceForFile(file.id, file.folder_id, file.owner_firebase_uid);
 
     await pool.query("DELETE FROM files WHERE id = $1", [validId]);
 
     if (file.storage_path) {
         await storageService.deleteFile(file.storage_path);
     }
+
+    await announce({ actorUid: callerUid, eventType: "file.deleted", file, audience, notifyVerb: "deleted" });
 
     return {
         id: file.id,

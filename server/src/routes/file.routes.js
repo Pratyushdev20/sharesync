@@ -10,7 +10,8 @@ import {
     downloadFileController,
     renameFileController,
     moveFileController,
-    deleteFileController
+    deleteFileController,
+    replaceFileContentController
 } from "../controllers/file.controller.js";
 
 const fileRouter = Router();
@@ -53,5 +54,6 @@ fileRouter.put("/:id", renameFileController);
 fileRouter.patch("/:id/move", moveFileController);
 fileRouter.put("/:id/move", moveFileController);
 fileRouter.delete("/:id", deleteFileController);
+fileRouter.put("/:id/content", handleUpload, replaceFileContentController);
 
 export default fileRouter;

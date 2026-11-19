@@ -34,7 +34,7 @@ export async function requireFileAccess(uid, fileId, needed, action = "access th
 
     const res = await pool.query(
         `SELECT id, name, size, mime_type, storage_path, folder_id, owner_id, owner_firebase_uid,
-                is_encrypted, created_at, updated_at
+                is_encrypted, version, created_at, updated_at
          FROM files WHERE id = $1`,
         [fileId]
     );
@@ -56,7 +56,7 @@ export async function requireFolderAccess(uid, folderId, needed, action = "acces
     if (!uid) throw new AppError("Unauthorized: Firebase UID is required", 401);
 
     const res = await pool.query(
-        `SELECT id, name, owner_id, owner_firebase_uid, parent_folder_id, created_at, updated_at
+        `SELECT id, name, owner_id, owner_firebase_uid, parent_folder_id, version, created_at, updated_at
          FROM folders WHERE id = $1`,
         [folderId]
     );
@@ -68,6 +68,33 @@ export async function requireFolderAccess(uid, folderId, needed, action = "acces
         throw new AppError(`Forbidden: You do not have permission to ${action}`, 403);
     }
     return { folder, permission };
+}
+
+/**
+ * Loads a note and verifies access. Notes inherit permissions from the folder they live in;
+ * notes at the root of a workspace are private to their owner.
+ * @returns {Promise<{ note: object, permission: 'owner'|'editor'|'viewer' }>}
+ */
+export async function requireNoteAccess(uid, noteId, needed, action = "access this note") {
+    if (!uid) throw new AppError("Unauthorized: Firebase UID is required", 401);
+
+    const res = await pool.query(
+        `SELECT id, owner_firebase_uid, folder_id, kind, title, content, version,
+                created_by_uid, updated_by_uid, created_at, updated_at
+         FROM notes WHERE id = $1`,
+        [noteId]
+    );
+    if (res.rows.length === 0) throw new AppError("Note not found", 404);
+
+    const note = res.rows[0];
+    let permission = null;
+    if (note.owner_firebase_uid === uid) permission = "owner";
+    else if (note.folder_id !== null) permission = await resolvePermission(uid, "folder", note.folder_id);
+
+    if (!hasAtLeast(permission, needed)) {
+        throw new AppError(`Forbidden: You do not have permission to ${action}`, 403);
+    }
+    return { note, permission };
 }
 
 /**

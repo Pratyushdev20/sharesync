@@ -12,6 +12,20 @@ export function getApiBaseUrl(): string {
   return 'http://localhost:2000';
 }
 
+/** Error thrown by API helpers. `network` = request never reached the server (offline). */
+export type ApiError = Error & { status?: number; code?: string; details?: any; network?: boolean };
+
+export function isNetworkError(err: unknown): boolean {
+  return !!(err && typeof err === 'object' && (err as ApiError).network);
+}
+
+function networkError(cause: unknown): ApiError {
+  const err = new Error('You appear to be offline. Changes will sync when the connection returns.') as ApiError;
+  err.network = true;
+  (err as any).cause = cause;
+  return err;
+}
+
 /**
  * Retrieves the current Firebase ID token.
  */
@@ -48,10 +62,15 @@ export async function apiRequest<T = any>(
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (cause) {
+    throw networkError(cause);
+  }
 
   let data: ApiResponse<T>;
   try {
@@ -65,9 +84,10 @@ export async function apiRequest<T = any>(
 
   if (!response.ok) {
     const errorMsg = data.message || `Request failed with status ${response.status}`;
-    const error = new Error(errorMsg) as Error & { status?: number; code?: string };
+    const error = new Error(errorMsg) as ApiError;
     error.status = response.status;
     error.code = data.code;
+    error.details = (data as any).details;
     throw error;
   }
 
@@ -80,7 +100,8 @@ export async function apiRequest<T = any>(
 export function uploadFileWithProgress(
   endpoint: string,
   formData: FormData,
-  onProgress?: (progress: UploadProgress) => void
+  onProgress?: (progress: UploadProgress) => void,
+  method: 'POST' | 'PUT' = 'POST'
 ): Promise<ApiResponse<any>> {
   return new Promise(async (resolve, reject) => {
     try {
@@ -89,7 +110,7 @@ export function uploadFileWithProgress(
       const url = `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', url, true);
+      xhr.open(method, url, true);
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
       if (xhr.upload && onProgress) {
@@ -120,14 +141,16 @@ export function uploadFileWithProgress(
           resolve(responseJson);
         } else {
           const errorMsg = responseJson.message || `Upload failed with status ${xhr.status}`;
-          const err = new Error(errorMsg) as Error & { status?: number };
+          const err = new Error(errorMsg) as ApiError;
           err.status = xhr.status;
+          err.code = (responseJson as any).code;
+          err.details = (responseJson as any).details;
           reject(err);
         }
       };
 
       xhr.onerror = () => {
-        reject(new Error('Network error occurred during file upload.'));
+        reject(networkError(new Error('Network error occurred during file upload.')));
       };
 
       xhr.send(formData);

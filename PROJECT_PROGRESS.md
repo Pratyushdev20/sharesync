@@ -1,40 +1,44 @@
 # ShareSync — Project Progress Tracker
 
 > **Purpose:** Living development tracker. Check before every task; update after every task.  
-> **Stack:** React Native (Expo SDK 57) + TypeScript | Node.js (Express 5) + PostgreSQL + Firebase
+> **Stack:** React Native (Expo SDK 57) + TypeScript | Node.js (Express 5 + Socket.IO 4) + PostgreSQL + Firebase  
+> **This file is the canonical progress report.** `PROJECT_PROGRESS.md` is an identical copy. `SHARESYNC_RESUME_CHECKPOINT.md` is a hand-off note written by another session; where they differ, this file is authoritative.
 
 ---
 
 ## 0. Status Summary (as of 2026-11-20)
 
-**Overall roadmap completion: ~45%**
+**Overall roadmap completion: ~78%** (server features are implemented and covered by automated tests; the new app screens compile and bundle for web and Android but have **not yet been exercised on a real device or browser**, which is why the overall figure is lower than the per-area server numbers).
 
-| Roadmap area | Status | Done | Notes |
+| Roadmap area | Status | Done | Evidence / what is missing |
 |---|---|---|---|
-| A. Accounts & authentication | 🟢 Mostly done | ~80% | Email/password, token verification, persistence, protected routes. Missing: Google Sign-In, profile screen |
-| B. Workspace & file management | 🟢 Mostly done | ~85% | Full explorer on web **and** mobile (upload/download). Missing: file preview, move/recursive-delete folders, sort by type, global search |
-| C. File & folder sharing | ✅ Done | ~95% | Users (viewer/editor), links (expiry, password, sign-in), Shared tab, WhatsApp/share sheet. Missing: notifications |
-| D. Real-time synchronization | 🔴 Not started | 0% | No WebSocket/polling; devices update only on refresh |
-| E. Notes & documents | 🔴 Not started | 0% | — |
-| F. Notifications | 🔴 Not started | 0% | Recipients see shares only after refreshing the Shared tab |
-| G. Security & access control | 🟢 Mostly done | ~85% | Permissions, encryption at rest, rate limits, headers, CORS allowlist. Missing: HTTPS deployment, schema-based input validation |
-| H. Platform & infrastructure | 🟡 Partial | ~50% | Missing: cloud object storage, full migrations, test runner, structured logging, deployment |
-| Differentiators (audit log, offline, approvals) | 🔴 Not started | 0% | Link open counts are the only activity tracking so far |
+| A. Accounts & authentication | ✅ Done | ~95% | Email/password, Google Sign-In, profile management, account deletion — server tested. Google on Android/iOS needs OAuth client IDs + a development build |
+| B. Workspace & file management | 🟢 Mostly done | ~90% | Tested; file versions; in-app preview (images, text, PDF on web/iOS, audio/video on web). Missing: folder move, recursive folder delete, sort by type |
+| C. File & folder sharing | ✅ Done | ~95% | 132 sharing API checks. Missing: public deployment so links work off-LAN |
+| D. Real-time synchronization | 🟢 Implemented | ~85% | Socket.IO + change feed + conflicts tested end-to-end on the server (two "devices" per user). Offline files are mobile-only; client sync not yet device-tested |
+| E. Notes & document workspace | 🟢 Implemented | ~90% | CRUD, folders, permissions, conflicts, offline outbox. Server tested; editor UI not device-tested |
+| F. Notifications | 🟢 Implemented | ~85% | In-app history, read/unread, real-time delivery tested. Mobile push needs EAS project + `PUSH_ENABLED` (see §6) |
+| G. Security & access control | 🟢 Mostly done | ~90% | IDOR, roles, links, rate limits, validation, encryption at rest tested. Missing: HTTPS in deployment |
+| H. Platform & infrastructure | 🟡 Partial | ~75% | Migrations, logging, validation, health checks, test runner, S3 driver done. Missing: S3 verified against a real bucket, CI, Docker/deployment |
+| Differentiators (audit log, offline, approvals) | 🟡 Started | ~30% | Activity/audit log API + offline files + offline notes done; approvals and team workflows not started |
 
-**Tests:** 8 suites, **468 assertions passing, 0 failing** (run with `NODE_ENV=test node <suite>.mjs` from `server/`).
+**Automated tests:** `npm test` (server) → **11 suites, 664 assertions passing, 0 failing** (run 2026-11-20).
 
-| Suite | Assertions |
-|---|---|
-| `test_sharing_api.mjs` | 132 |
-| `test_file_crud.mjs` | 85 |
-| `test_folder_crud.mjs` | 58 |
-| `test_sharing_services.mjs` | 47 |
-| `test_user_crud.mjs` | 43 |
-| `test_frontend_integration.mjs` | 40 |
-| `test_auth_login.mjs` | 32 |
-| `test_auth_register.mjs` | 31 |
+| Suite | Assertions | Covers |
+|---|---|---|
+| `test_phase_dh.mjs` | 144 | Real-time sync, change feed, devices, conflicts, notes, notifications, activity, health, validation, S3 driver, account deletion, DB constraints, fresh-DB migrations |
+| `test_sharing_api.mjs` | 132 | Sharing, permissions, links, passwords, expiry, encryption at rest, tamper detection, CORS, brute-force lockout |
+| `test_file_crud.mjs` | 85 | File API regression |
+| `test_folder_crud.mjs` | 58 | Folder API regression |
+| `test_sharing_services.mjs` | 47 | Sharing service layer |
+| `test_user_crud.mjs` | 43 | User API, ownership |
+| `test_frontend_integration.mjs` | 40 | Client ↔ API contract |
+| `test_auth_login.mjs` | 32 | Login, token verification |
+| `test_auth_register.mjs` | 31 | Registration |
+| `test_profile_google.mjs` | 32 | Google session (create / reuse / no takeover / unverified refused), profile, stats, name edit validation, account deletion with recent-sign-in requirement |
+| `test_push_notifications.mjs` | 20 | Push token registration, account switching, unregister, Expo transport, dead-token pruning (written by another session; route bug fixed here) |
 
-**Not yet verified:** the new app screens (Share dialog, Shared tab, link page, mobile upload/download) pass type-check and build for web/Android but have not been exercised on a real device or browser.
+**Client checks:** `npx tsc --noEmit` → 0 errors; `expo export` for web and Android → both bundles build. No device/emulator run yet.
 
 ---
 
@@ -42,63 +46,78 @@
 
 | # | Feature | Client | Server | Notes |
 |---|---------|--------|--------|-------|
-| 1 | Dedicated Signup screen & Backend Sync | ✅ `app/signup.tsx` | ✅ `POST /api/auth/register` | `createUserWithEmailAndPassword`, `updateProfile` for display name, token verification, creates PostgreSQL record without storing passwords, rollback on failure |
-| 2 | Dedicated Login screen | ✅ `app/login.tsx` | — | `signInWithEmailAndPassword`; backend integration; link to Signup (ID token is no longer displayed on screen) |
-| 3 | Verified Backend Login API | ✅ `app/login.tsx` | ✅ `POST /api/auth/login` | Accepts Firebase ID token via Bearer header or body, verifies with Firebase Admin SDK, extracts UID, fetches PostgreSQL user; links legacy records by email only when Firebase reports `email_verified` |
-| 4 | Firebase Auth Session Persistence | ✅ `config/firebase.ts` | — | `initializeAuth()` with `getReactNativePersistence(AsyncStorage)` (native) / `browserLocalPersistence` (web); singleton pattern |
-| 5 | Global Auth Context & State Management | ✅ `context/AuthContext.tsx` | — | `AuthProvider`, `useAuth()`, `onAuthStateChanged()` listener with cleanup, `user` and `loading` states, `login`, `register`, `logout` |
-| 6 | Protected Routes & Navigation Guard | ✅ `app/_layout.tsx` | — | Redirects unauthenticated users to `/login`; permits `/signup` and public share links `/s/<token>`; returns to a pending share link after sign-in |
-| 7 | Protected Home Dashboard | ✅ `app/index.tsx` | — | Displays authenticated user info, UID, shortcut to File Explorer, sign out |
-| 8 | Auth token verification route | — | ✅ `GET /auth`, `GET /api/auth` | Uses `authMiddleware` to verify Firebase Bearer token |
-| 9 | Secure User CRUD API | — | ✅ `/users`, `/api/users` | Ownership enforced via `req.user.uid`; email comes only from the verified token and cannot be changed via `PATCH` (prevents email takeover) |
-| 10 | Health check endpoint | — | ✅ `GET /api/health` | Static response via `health.service.js` |
-| 11 | Test echo endpoint | — | ✅ `POST /api/test/users` | Debug only — disabled when `NODE_ENV=production` (as is `GET /error`) |
-| 12 | Firebase Admin SDK initialization on boot | — | ✅ `src/app.js`, `config/firebase.js` | Initialized at startup; null-safe private key parsing |
-| 13 | CORS allowlist | — | ✅ `middleware/security.js` | Only origins in `CORS_ORIGINS` (default `localhost:8081`, `localhost:19006`); native apps (no Origin) unaffected; allows `X-Share-Password`, exposes `Content-Disposition` |
-| 14 | PostgreSQL connection pool | — | ✅ `config/db.js` | Reads DB config from env vars |
-| 15 | Environment config module | — | ✅ `config/env.js` | `port`, `nodeEnv`, `maxFileSize`, `uploadDir`, `corsOrigins`, rate-limit settings |
-| 16 | Request logger middleware | — | ✅ `middleware/logger.js` | Logs `[METHOD] /path`; share-link tokens redacted |
-| 17 | Standardized error handler | — | ✅ `middleware/errorHandler.js` | JSON `{ success:false, message, code? }`; hides internal details of unexpected 500 errors |
-| 18 | Custom AppError class | — | ✅ `utils/AppError.js` | `statusCode`, `isOperational`, optional machine-readable `code` (e.g. `PASSWORD_REQUIRED`) |
-| 19 | Secure User service layer | — | ✅ `services/user.service.js` | Data access for `users` without `password_hash` leaks |
-| 20 | Theme system (light/dark) | ✅ `constants/theme.ts` | — | `Colors`, `Fonts`, `Spacing`, `BottomTabInset`, `MaxContentWidth` |
-| 21 | Color scheme hooks (safe fallback) | ✅ hooks | — | `useColorScheme` (native + web hydration-safe), crash-proof `useTheme` |
-| 22 | Themed UI primitives | ✅ components | — | `ThemedText`, `ThemedView`, `Collapsible`, `ExternalLink` |
-| 23 | Tab navigation | ✅ `app-tabs.tsx`, `app-tabs.web.tsx` | — | Tabs: **Home**, **Files**, **Shared** (native + web) |
-| 24 | Animated splash overlay | ✅ `animated-icon.tsx` | — | Reanimated keyframe animations + splash screen hide |
-| 25 | Secure Folder Management API | — | ✅ `/folders`, `/api/folders` | Full CRUD; nested folders; duplicate prevention (409); non-empty delete blocked (400); all access through `access.service.js` (owner / editor / viewer) |
-| 26 | Secure File Management API | — | ✅ `/files`, `/api/files` | Upload, list, metadata, streaming download, rename, move (owner only), delete; 50MB limit; magic-byte validation and executable rejection; permission checks through `access.service.js` |
-| 27 | File Explorer Frontend | ✅ `components/explorer/FileExplorerScreen.tsx` | — | Breadcrumbs, grid/list, search, sort (name/size/date), all CRUD modals, upload progress, download progress banner, success/error notices; actions shown according to permission |
-| 28 | Mobile upload & download | ✅ `UploadModal.tsx`, `file.service.ts`, `useFileExplorer.ts` | — | Native document picker (`expo-document-picker`); downloads to app cache with progress (`expo-file-system`), then "Save to device" (Android folder picker) or "Save / Share" (`expo-sharing`) |
-| 29 | Sharing — database & core services | — | ✅ `services/share.service.js`, `migrate_feature29_shares.mjs` | `file_shares`, `folder_shares`, `share_links` with FKs (`ON DELETE CASCADE`) and constraints; `resolvePermission` (owner > direct share > nearest shared ancestor folder) |
-| 30 | Sharing — API & permission enforcement | — | ✅ `/api/shares`, `access.service.js` | Share by email (viewer/editor), change permission, revoke, who-has-access, Shared with me / by me. Viewer: view + download. Editor: + upload, create subfolders, rename, delete contents. Owner only: move, share, delete the shared root. Re-sharing by recipients blocked |
-| 31 | Share links | ✅ Share dialog | ✅ `/api/shares/links`, `/api/public/links/:token` | View-only links; 256-bit tokens stored as SHA-256 hashes and shown once; expiry (1 day–1 year or never); optional password (scrypt hash, `X-Share-Password` header); optional sign-in requirement; revoke; open counts; folder links confined to the shared folder tree |
-| 32 | Share dialog | ✅ `modals/ShareModal.tsx` | — | Send to a ShareSync user by email, manage people and permissions, create/turn off links, share via **WhatsApp**, system share sheet ("More apps"), copy link, send a copy of the file itself |
-| 33 | Shared tab | ✅ `app/shared.tsx` | — | Items others shared with you ("From X • Can view/edit"); browse into shared folders; upload/rename/delete when editor |
-| 34 | Public link page | ✅ `app/s/[token].tsx` | — | Opens links with or without an account; password prompt; sign-in prompt; browse folder links; download; "Open in the ShareSync app" (`sharesync://s/<token>`) |
-| 35 | Encryption at rest | — | ✅ `utils/crypto.js`, `storage.service.js` | AES-256-GCM with per-file keys (HKDF from `FILE_ENCRYPTION_KEY`); tamper detection (a modified file is never delivered complete); legacy plaintext files still readable; `encrypt_existing_files.mjs` to encrypt old files; server refuses to start without a key |
-| 36 | Security hardening | — | ✅ `middleware/security.js` | `helmet` headers, `x-powered-by` off, general rate limit (300/15 min), auth limit (20/15 min), share-creation limit (30/15 min per user), link limit (120/15 min) and failed-attempt lockout (10/15 min), JSON body limit 100kb, `no-store` + `nosniff` on downloads, strict path-traversal check |
+| 1 | Dedicated Signup screen & Backend Sync | ✅ `app/signup.tsx` | ✅ `POST /api/auth/register` | Firebase signup, PostgreSQL record (no passwords), rollback on failure |
+| 2 | Dedicated Login screen | ✅ `app/login.tsx` | — | Firebase + backend login; token not displayed |
+| 3 | Verified Backend Login API | — | ✅ `POST /api/auth/login` | Firebase Admin verification; legacy linking only for verified emails |
+| 4 | Firebase Auth Session Persistence | ✅ `config/firebase.ts` | — | AsyncStorage (native) / browser storage (web) |
+| 5 | Global Auth Context | ✅ `context/AuthContext.tsx` | — | login, register, logout (logout also unregisters the push token) |
+| 6 | Protected Routes & Navigation Guard | ✅ `app/_layout.tsx` | — | Public `/s/<token>`; return to link after sign-in |
+| 7 | Home dashboard | ✅ `app/index.tsx` | — | Sync status, unread alerts, notes shortcut, offline files, synced device count |
+| 8 | Auth token verification route | — | ✅ `GET /api/auth` | |
+| 9 | Secure User CRUD API | — | ✅ `/api/users` | Ownership; email locked to verified token |
+| 10 | Health checks | — | ✅ `GET /api/health`, `GET /api/health/ready` | Liveness + readiness (database, migrations, storage, encryption key, real-time) — 503 when not ready, no internals exposed |
+| 11 | Test echo endpoint | — | ✅ `POST /api/test/users` | Disabled in production |
+| 12 | Firebase Admin init | — | ✅ `config/firebase.js` | |
+| 13 | CORS allowlist | — | ✅ `middleware/security.js`, Socket.IO | `CORS_ORIGINS`; production check refuses localhost / http origins |
+| 14 | PostgreSQL pool | — | ✅ `config/db.js` | Pool error handler (no crash on idle disconnect), numeric port, optional TLS, `withTransaction()` |
+| 15 | Environment config & validation | — | ✅ `config/env.js` | `validateEnv()` at startup; server refuses to start with missing/unsafe config |
+| 16 | Structured logging | — | ✅ `utils/log.js`, `middleware/logger.js` | JSON lines, levels, request ids (`X-Request-Id`), duration, secret/token redaction |
+| 17 | Centralized error handling | — | ✅ `middleware/errorHandler.js` | `{ success, message, code, details?, requestId }`; malformed JSON 400; too large 413; JSON 404 for unknown routes; 500 internals hidden |
+| 18 | Custom AppError | — | ✅ `utils/AppError.js` | Optional `code`, `details` |
+| 19 | User service | — | ✅ `services/user.service.js` | Account deletion now removes all owned data atomically + stored files |
+| 20 | Theme system | ✅ `constants/theme.ts` | — | |
+| 21 | Color scheme hooks | ✅ hooks | — | |
+| 22 | Themed UI primitives | ✅ components | — | |
+| 23 | Tab navigation | ✅ `app-tabs.tsx`, `app-tabs.web.tsx` | — | Home, Files, Shared, Notes, Alerts (web shows unread count and sync status) |
+| 24 | Animated splash | ✅ | — | |
+| 25 | Folder API | — | ✅ `/api/folders` | CRUD, permissions, versions, change events; delete blocked if notes inside |
+| 26 | File API | — | ✅ `/api/files` | Upload, list, metadata, download (`X-File-Version`), rename, move, delete, **new version upload**, versions + conflict detection |
+| 27 | File Explorer | ✅ `FileExplorerScreen.tsx` | — | Live refresh on remote changes, notes section, "+ Note/Document here", upload new version, keep offline, sync badge |
+| 28 | Mobile upload & download | ✅ | — | Native picker; download with progress; save/share |
+| 29 | Sharing — DB & core services | — | ✅ | |
+| 30 | Sharing — API & permission enforcement | — | ✅ `/api/shares`, `access.service.js` | |
+| 31 | Share links | ✅ | ✅ `/api/public/links/:token` | Password, expiry, sign-in, view-only, folder containment |
+| 32 | Share dialog | ✅ `ShareModal.tsx` | — | Users, WhatsApp, share sheet, copy, send copy |
+| 33 | Shared tab | ✅ `app/shared.tsx` | — | Live updates when shared/revoked |
+| 34 | Public link page | ✅ `app/s/[token].tsx` | — | |
+| 35 | Encryption at rest | — | ✅ `utils/crypto.js`, `storage.service.js` | AES-256-GCM, streaming `DecryptStream` with tamper hold-back, both storage drivers |
+| 36 | Security hardening | — | ✅ | helmet, rate limits, lockouts, limits |
+| 37 | **Real-time sync (D)** | ✅ `context/SyncContext.tsx`, `services/sync.service.ts` | ✅ `realtime/socket.js`, `events.service.js` | Firebase-authenticated Socket.IO; private per-user rooms; events only to users with access; socket closed at token expiry; client reconnect with fresh token, backoff, NetInfo + foreground resync |
+| 38 | **Change feed & offline catch-up (D)** | ✅ cursor in AsyncStorage | ✅ `/api/sync/changes`, `/api/sync/cursor`, `sync_events` | Ordered, paginated, per-user; retention pruning with watermark → `reset` = full reload |
+| 39 | **Conflict detection (D)** | ✅ note editor conflict UI; file "new version" refresh | ✅ `version` on files/folders/notes | Atomic `WHERE version = expected`; 409 `CONFLICT` with current copy; never silently overwrites |
+| 40 | **Sync devices (D)** | ✅ Home device count | ✅ `/api/sync/devices`, `sync_devices` | Tracked on socket connect and catch-up |
+| 41 | **Offline files (D)** | ✅ `services/offline.service.ts`, Home list, 📥 on files | — | Android/iOS private copies; auto re-download on new version; removed when access revoked/file deleted. Not available on web |
+| 42 | **Sync status indicator (D)** | ✅ `SyncStatusBadge.tsx` | — | Synced / Syncing / Connecting / Offline / Problem + "N waiting to sync"; tap to sync now |
+| 43 | **Notes & documents (E)** | ✅ `app/notes.tsx`, `NoteEditorModal.tsx`, explorer notes section | ✅ `/api/notes`, `note.service.js`, `notes` table | CRUD, note/document kinds, folders, search, permissions from folder sharing, real-time sync, offline cache + outbox |
+| 44 | **Notifications (E/F)** | ✅ `app/notifications.tsx`, unread counts | ✅ `/api/notifications`, `notification.service.js` | Share created / permission changed / revoked; uploads, deletes, notes in shared folders; history, read/unread, mark one/all, delete, real-time delivery, read state synced across devices |
+| 45 | **Push notifications (F)** | ✅ `pushNotification.service.ts`, mounted in `_layout.tsx` (another session) | ✅ push token API + Expo transport | Delivery off unless `PUSH_ENABLED=true`; dead tokens pruned |
+| 46 | **Activity / audit log (G/H)** | — (API only) | ✅ `/api/sync/activity`, `activity_log` | Uploads, edits, moves, deletes, downloads, link downloads, sharing; per-resource (viewers+) and personal feed |
+| 47 | **Migration system (H)** | — | ✅ `migrate.mjs`, `migrations/001–005` | `npm run migrate` / `migrate:status`; baseline for core tables; advisory lock; transactional; idempotent; verified on a brand-new database |
+| 48 | **Object storage driver (H)** | — | ✅ `S3Driver` in `storage.service.js` | AWS S3 / R2 / MinIO / B2; ciphertext only; mixed local+S3 reads. Verified with an in-memory S3 in tests, **not yet against a real bucket** |
+| 49 | **Input validation (H/G)** | — | ✅ `middleware/validate.js` (zod) | All new endpoints + sharing endpoints; strict bodies (no mass assignment); control characters stripped |
+| 50 | **Test runner (H)** | — | ✅ `run_tests.mjs` / `npm test` | Per-suite isolation, summary, cleanup of test rows, optional `TEST_DB_NAME` |
+| 51 | **Google Sign-In (A)** | ✅ `components/auth/GoogleSignInButton.tsx`, `services/googleAuth.ts`, login & signup screens | ✅ `POST /api/auth/session` | Web: Firebase popup. Android/iOS: expo-auth-session ID token → Firebase. First sign-in creates the account from the verified Google email; an email already used by another account is refused (no takeover); unverified emails are never auto-registered |
+| 52 | **Profile management (A)** | ✅ `components/profile/ProfileModal.tsx` (Home → Profile & account), `services/profile.service.ts` | ✅ `GET/PATCH/DELETE /api/users/me` | Edit name (DB + Firebase), email verification, change password (re-auth), reset email, sign-in method, usage stats, synced devices (forget), sign out, delete account (type DELETE + password/Google re-auth; server requires sign-in within 5 minutes; deletes all data and the Firebase account). Also "Forgot password?" on login |
+| 53 | **File preview (B)** | ✅ `components/explorer/modals/FilePreviewModal.tsx` (tap a file) | — (uses authorised download) | Images incl. SVG (as image, no scripts), text/CSV/JSON/Markdown (first 200k chars), PDF (web + iOS), audio/video (web); 25MB limit; allow-listed render types; temporary native copies deleted on close; other types → Download / Open in another app |
 
 ---
 
 ## 2. Pending Features
 
-| # | Feature | Priority | Notes |
+| # | Feature | Priority | Reason not done / notes |
 |---|---------|----------|-------|
-| 1 | **Real-time synchronization** | 🔴 High | Socket.IO with Firebase-authenticated connections; push changes to owners and shared users; sync status; conflict handling via `updated_at` |
-| 2 | **Share notifications** | 🔴 High | In-app + push (`expo-notifications`) when something is shared, changed or revoked |
-| 3 | **HTTPS deployment & public web URL** | 🔴 High | Share links use `EXPO_PUBLIC_WEB_URL` (defaults to `localhost`, so links don't work on other devices yet); TLS needed for encryption in transit |
-| 4 | **File preview** | 🟡 Medium | Images, PDF, text |
-| 5 | **Folder move & recursive delete** | 🟡 Medium | Only empty folders can be deleted; folders cannot be moved |
-| 6 | **Google sign-in** | 🟡 Medium | Not started |
-| 7 | **Profile screen** | 🟡 Medium | View/edit name, change password, delete account |
-| 8 | **Migrations for base tables** | 🟡 Medium | Only sharing (feature 29/30) tables have scripts; `users`/`folders`/`files` were altered by hand |
-| 9 | **Cloud object storage** | 🟡 Medium | Files on local disk; `storage.service.js` is ready to swap for S3/GCS/Firebase Storage |
-| 10 | **Test runner & test database** | 🟡 Medium | Suites are standalone scripts against the real DB; no `npm test` |
-| 11 | **Notes & documents** | 🟡 Medium | Not started |
-| 12 | **Schema-based input validation** | 🔵 Low | Manual checks only (no Joi/Zod) |
-| 13 | **Structured logging** | 🔵 Low | Only `console.log/error` |
-| 14 | **Activity / audit log, offline mode, approvals** | 🔵 Low | Differentiators from the roadmap |
+| 1 | **Device testing of the app** | 🔴 High | Not possible in this environment (no device/emulator/browser automation). Needed for every client feature above |
+| 2 | **Deployment: HTTPS, public web URL, Docker/hosting** | 🔴 High | Requires hosting decisions and a domain. Without it, share links point to localhost and data is not encrypted in transit |
+| 3 | **Verify S3 driver against a real bucket** | 🟡 Medium | Needs real credentials (`S3_*`); none provided |
+| 4 | **Mobile push delivery live** | 🟡 Medium | Needs an EAS project id in `app.json` (`extra.eas.projectId`) and `PUSH_ENABLED=true`; physical device required |
+| 6 | **Folder move & recursive delete** | 🟡 Medium | Not started; only empty folders can be deleted |
+| 7 | **Google Sign-In on Android/iOS — configuration** | 🟡 Medium | Code done; needs `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID` and a development build (does not work in Expo Go). Web works once Google is enabled in Firebase |
+| 8 | **Sign out of all devices** | 🔵 Low | Profile can "forget" a device record but cannot revoke its session yet (needs Firebase token revocation + revoked-token checks) |
+| 8b | **PDF preview on Android, audio/video preview on mobile** | 🔵 Low | Shown via "Open in…" another app instead |
+| 9 | **Activity log UI** | 🔵 Low | API exists; no screen |
+| 10 | **Offline files on web** | 🔵 Low | Browsers have no reliable private file storage; would need a service worker / IndexedDB design |
+| 11 | **CI pipeline** | 🔵 Low | `npm test` exists; not wired into CI |
+| 12 | **Approvals / team workflows** | 🔵 Low | Roadmap differentiators, not started |
 
 ---
 
@@ -112,219 +131,161 @@
 
 ## 4. Code Registry
 
-### Client — Screens & Layouts
+### Server — API endpoints
 
-| File | Path | Exports | Purpose |
-|------|------|---------|---------|
-| Root layout | `client/src/app/_layout.tsx` | `RootLayout` (default) | AuthProvider, ThemeProvider, NavigationGuard (protects app; `/login`, `/signup`, `/s/*` are public; pending redirect after sign-in) |
-| Signup screen | `client/src/app/signup.tsx` | default | Registration with backend sync and rollback |
-| Login screen | `client/src/app/login.tsx` | default | Firebase + backend login |
-| Home screen | `client/src/app/index.tsx` | default | User info, shortcut to File Explorer, sign out |
-| Files tab | `client/src/app/explore.tsx` | default | Renders `FileExplorerScreen mode="mine"` |
-| Shared tab | `client/src/app/shared.tsx` | default | Renders `FileExplorerScreen mode="shared"` |
-| Share link page | `client/src/app/s/[token].tsx` | default | Public link viewer: password/sign-in prompts, folder browsing, downloads |
+| Area | Endpoints |
+|---|---|
+| Health | `GET /api/health` (liveness), `GET /api/health/ready` (readiness) |
+| Auth | `POST /api/auth/register`, `POST /api/auth/login`, **`POST /api/auth/session`** (Google / any provider: sign in or create), `GET /api/auth` (+ `/auth` aliases) |
+| Users | **`GET/PATCH/DELETE /api/users/me`** (own profile, stats, delete account with recent sign-in), `GET/POST /api/users`, `GET/PATCH/DELETE /api/users/:id` |
+| Folders | `POST/GET /api/folders`, `GET/PATCH/PUT/DELETE /api/folders/:id` (`expected_version` on rename) |
+| Files | `POST /api/files/upload`, `GET /api/files`, `GET/PATCH/PUT/DELETE /api/files/:id` (`expected_version`), `GET /api/files/:id/download`, `PATCH/PUT /api/files/:id/move`, **`PUT /api/files/:id/content`** (new version) |
+| Sharing | `POST /api/shares`, `PATCH/DELETE /api/shares/:type/:shareId`, `GET /api/shares/with-me`, `GET /api/shares/by-me`, `GET /api/shares/resource/:type/:id`, `POST /api/shares/links`, `DELETE /api/shares/links/:linkId` |
+| Public links | `GET /api/public/links/:token`, `GET …/:token/contents`, `GET …/:token/download` |
+| **Notes** | `GET /api/notes?folder_id=&q=&kind=`, `POST /api/notes`, `GET/PATCH/PUT /api/notes/:id` (`expected_version` required), `DELETE /api/notes/:id?expected_version=` |
+| **Notifications** | `GET /api/notifications?limit=&before=&unread=`, `GET /api/notifications/unread-count`, `POST /api/notifications/read-all`, `PATCH /api/notifications/:id/read`, `DELETE /api/notifications/:id`, `POST /api/notifications/push-tokens`, `DELETE /api/notifications/push-tokens[/:token]` |
+| **Sync** | `GET /api/sync/cursor`, `GET /api/sync/changes?since=&limit=`, `GET/POST /api/sync/devices`, `DELETE /api/sync/devices/:deviceId` |
+| **Activity** | `GET /api/sync/activity`, `GET /api/sync/activity/:type/:id` |
+| **Real-time** | Socket.IO at `/socket.io` — auth `{ token, deviceId, platform }`; server events `sync:hello`, `sync:event`, `notification:new`, `notification:read`, `auth:expired` |
 
-### Client — Contexts & State
+### Database tables & migrations
 
-| File | Path | Exports | Purpose |
-|------|------|---------|---------|
-| Auth Context | `client/src/context/AuthContext.tsx` | `AuthProvider`, `useAuth`, `AuthContextType` | Firebase auth state, login, register, logout |
+| Migration | Adds |
+|---|---|
+| `001_baseline.mjs` | `users`, `folders`, `files` (+ constraints/indexes) — no-op on existing DB, builds a fresh one |
+| `002_sharing_tables.mjs` | `file_shares`, `folder_shares`, `share_links` |
+| `003_sharing_api.mjs` | link passwords/access counts, `files.is_encrypted`, `files.uploaded_by_uid` |
+| `004_sync_notes_notifications.mjs` | `files.version`, `folders.version`, `notes`, `notifications`, `activity_log`, `sync_events`, `sync_devices`, `push_tokens` (FKs, CHECKs, indexes) |
+| `005_sync_state.mjs` | `sync_state` (change-feed prune watermark) |
+| (runner) | `schema_migrations` |
 
-### Client — Reusable Components
+Backups taken before migrating: `server/backups/pre_feature30_backup_*.json`, `pre_feature31_backup_*.json` (git-ignored).
 
-| Component | Path | Exports | Purpose |
-|-----------|------|---------|---------|
-| `ThemedText` | `client/src/components/themed-text.tsx` | `ThemedText`, `ThemedTextProps` | Theme-aware text |
-| `ThemedView` | `client/src/components/themed-view.tsx` | `ThemedView`, `ThemedViewProps` | Theme-aware view |
-| `Collapsible` | `client/src/components/ui/collapsible.tsx` | `Collapsible` | Expandable section |
-| `ExternalLink` | `client/src/components/external-link.tsx` | `ExternalLink` | Opens URL in in-app browser / new tab |
-| `AppTabs` | `client/src/components/app-tabs.tsx` | default | Native tab bar: Home, Files, Shared |
-| `AppTabs` (web) | `client/src/components/app-tabs.web.tsx` | default, `TabButton`, `CustomTabList` | Web tab bar: Home, Files, Shared |
-| `AnimatedSplashOverlay` | `client/src/components/animated-icon.tsx` (+ `.web.tsx`) | `AnimatedSplashOverlay`, `AnimatedIcon` | Splash fade-out |
-| `FileExplorerScreen` | `client/src/components/explorer/FileExplorerScreen.tsx` | `FileExplorerScreen` | Shared explorer UI for "mine" and "shared" modes; permission-aware actions; download banner; Share dialog |
-| `BreadcrumbNav` | `client/src/components/explorer/BreadcrumbNav.tsx` | `BreadcrumbNav` | Breadcrumbs; "+ Folder"/"Upload" shown only when allowed |
-| `ExplorerToolbar` | `client/src/components/explorer/ExplorerToolbar.tsx` | `ExplorerToolbar` | Search, sort, view toggle, item count |
-| `FolderCard` | `client/src/components/explorer/FolderCard.tsx` | `FolderCard` | Grid/list folder card; optional share/rename/delete; subtitle ("From X • Can view") |
-| `FileCard` | `client/src/components/explorer/FileCard.tsx` | `FileCard` | Grid/list file card; download + optional share/rename/move/delete; subtitle |
-| `EmptyState` | `client/src/components/explorer/EmptyState.tsx` | `EmptyState` | Empty/search states; custom title/message; optional actions |
-| `CreateFolderModal` | `client/src/components/explorer/modals/CreateFolderModal.tsx` | `CreateFolderModal` | Create folder |
-| `UploadModal` | `client/src/components/explorer/modals/UploadModal.tsx` | `UploadModal` | Web file input / native document picker, 50MB guard, progress |
-| `RenameModal` | `client/src/components/explorer/modals/RenameModal.tsx` | `RenameModal` | Rename file/folder |
-| `MoveModal` | `client/src/components/explorer/modals/MoveModal.tsx` | `MoveModal` | Move file between folders |
-| `DeleteConfirmModal` | `client/src/components/explorer/modals/DeleteConfirmModal.tsx` | `DeleteConfirmModal` | Delete confirmation |
-| `ShareModal` | `client/src/components/explorer/modals/ShareModal.tsx` | `ShareModal`, `ShareTarget` | Share with users, manage access, create/turn off links, WhatsApp / share sheet / copy, send file copy |
-| `HintRow` | `client/src/components/hint-row.tsx` | `HintRow` | ⚠️ unused |
-| `WebBadge` | `client/src/components/web-badge.tsx` | `WebBadge` | Expo SDK badge on web |
+### Server — new / changed modules (this phase)
 
-### Client — Hooks
+| File | Purpose |
+|---|---|
+| `server.js` | HTTP server + Socket.IO, config validation, sync pruning timer, graceful shutdown |
+| `src/realtime/socket.js` | Authenticated real-time channel, per-user rooms, token-expiry disconnect, device tracking |
+| `src/services/events.service.js` | Audience calculation, change feed, real-time push, activity log, pruning |
+| `src/services/sync.service.js` | Change feed queries, cursor, devices |
+| `src/services/note.service.js` | Notes CRUD, permissions, conflicts, notifications |
+| `src/services/notification.service.js` | Notifications, read state, push tokens, pluggable transports (Expo push) |
+| `src/services/activity.service.js` | Activity history with access checks |
+| `src/services/access.service.js` | + `requireNoteAccess` |
+| `src/services/storage.service.js` | `LocalDriver`, `S3Driver`, `StorageService` |
+| `src/services/health.service.js` | Readiness checks |
+| `src/services/file.service.js`, `folder.service.js` | Versions, conflicts, change events, notifications, `replaceFileContent` |
+| `src/services/share.service.js`, `controllers/share.controller.js` | Share notifications + events |
+| `src/services/user.service.js` | Full account deletion |
+| `src/middleware/validate.js` | zod validation helpers |
+| `src/middleware/logger.js`, `src/utils/log.js` | Structured logging |
+| `src/middleware/errorHandler.js` | Error format, request ids |
+| `src/utils/crypto.js` | + `DecryptStream` |
+| `src/config/db.js`, `src/config/env.js` | Pool hardening, `validateEnv()`, new settings |
+| `src/routes/note.routes.js`, `notification.routes.js`, `sync.routes.js`, `share.routes.js`, `health.routes.js` | New/validated routes |
+| `migrate.mjs`, `migrations/*`, `run_tests.mjs`, `test_phase_dh.mjs`, `test_db.js` | Infrastructure & tests |
 
-| Hook | Path | Purpose |
-|------|------|---------|
-| `useColorScheme` | `client/src/hooks/use-color-scheme.ts` (+ `.web.ts`) | Color scheme (hydration-safe on web) |
-| `useTheme` | `client/src/hooks/use-theme.ts` | Crash-safe theme resolver |
-| `useFileExplorer` | `client/src/hooks/useFileExplorer.ts` | Explorer state for `mine`/`shared` modes: navigation, current access level, shared-item info, CRUD, upload, download with progress and save/share prompt, notices, share target |
+### Client — new / changed (this phase)
 
-### Client — Services & Utilities
-
-| File | Path | Exports | Purpose |
-|------|------|---------|---------|
-| `api.ts` | `client/src/services/api.ts` | `getApiBaseUrl`, `getAuthToken`, `apiRequest`, `uploadFileWithProgress` | Authenticated fetch/XHR; errors carry `status` and `code` |
-| `folder.service.ts` | `client/src/services/folder.service.ts` | `folderService` | Folder API calls |
-| `file.service.ts` | `client/src/services/file.service.ts` | `fileService`, `SelectedFile`, `NativeDownloadResult` | File API calls; `pickNativeFile`, `downloadFile`, `downloadFromUrl`, `saveToDeviceFolder`, `shareDownloadedFile` |
-| `share.service.ts` | `client/src/services/share.service.ts` | `shareService`, `LinkError` | Sharing API (users, permissions, links, Shared with me) and public link access (info, contents, download) |
-| `shareTargets.ts` | `client/src/utils/shareTargets.ts` | `buildShareUrl`, `buildAppDeepLink`, `buildShareMessage`, `copyText`, `shareViaWhatsApp`, `shareViaSystemSheet`, `sendFileCopy`, `getWebAppUrl` | Sending links/files to WhatsApp and other apps |
-| `pendingRedirect.ts` | `client/src/utils/pendingRedirect.ts` | `setPendingRedirect`, `takePendingRedirect` | Return to a share link after sign-in (in-app paths only) |
-| `explorer.ts` | `client/src/types/explorer.ts` | File/folder, sharing and link types | Domain models |
-| `fileFormatters.ts` | `client/src/utils/fileFormatters.ts` | `formatFileSize`, `formatDate`, `getFileTypeInfo` | Display formatting |
-
-### Client — Config & Constants
-
-| File | Path | Exports | Purpose |
-|------|------|---------|---------|
-| Firebase config | `client/src/config/firebase.ts` | `app`, `auth` (default) | Firebase client init with persistence |
-| Type augmentations | `client/src/types/firebase-auth.d.ts` | — | Declares `getReactNativePersistence` |
-| Theme constants | `client/src/constants/theme.ts` | `Colors`, `Fonts`, `Spacing`, ... | Design tokens |
-| Global CSS | `client/src/global.css` | — | Font variables |
-| App config | `client/app.json` | — | Name "ShareSync", scheme `sharesync`, plugins incl. `expo-sharing` |
-| Env | `client/.env` (git-ignored), `.env.example` | — | `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_WEB_URL`, Firebase web config |
-
-### Server — Entry & App
-
-| File | Path | Exports | Purpose |
-|------|------|---------|---------|
-| Entry point | `server/server.js` | — | Verifies `FILE_ENCRYPTION_KEY`, starts Express on `env.port` |
-| App setup | `server/src/app.js` | `app` (default) | Security headers, CORS, JSON limit, logger, rate limits, routes, error handler; debug routes only outside production |
-
-### Server — Routes
-
-| File | Path | Endpoints |
-|------|------|-----------|
-| Auth routes | `server/src/routes/auth.routes.js` | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth` (+ `/auth` aliases) |
-| User routes | `server/src/routes/user.routes.js` | `GET/POST /api/users`, `GET/PATCH/DELETE /api/users/:id` |
-| Health routes | `server/src/routes/health.routes.js` | `GET /api/health` |
-| Test routes | `server/src/routes/test.routes.js` | `POST /api/test/users` (non-production only) |
-| Folder routes | `server/src/routes/folder.routes.js` | `POST/GET /api/folders`, `GET/PATCH/PUT/DELETE /api/folders/:id` |
-| File routes | `server/src/routes/file.routes.js` | `POST /api/files/upload`, `GET /api/files`, `GET/PATCH/PUT/DELETE /api/files/:id`, `GET /api/files/:id/download`, `PATCH/PUT /api/files/:id/move` |
-| Share routes | `server/src/routes/share.routes.js` | `POST /api/shares`, `PATCH/DELETE /api/shares/:type/:shareId`, `GET /api/shares/with-me`, `GET /api/shares/by-me`, `GET /api/shares/resource/:type/:id`, `POST /api/shares/links`, `DELETE /api/shares/links/:linkId` |
-| Public link routes | `server/src/routes/publicLink.routes.js` | `GET /api/public/links/:token`, `GET .../:token/contents?folder_id=`, `GET .../:token/download?file_id=` (optional login) |
-
-### Server — Controllers
-
-| File | Path | Purpose |
-|------|------|---------|
-| Auth | `server/src/controllers/auth.controller.js` | Register / login from verified token |
-| Users | `server/src/controllers/user.controller.js` | User CRUD with ownership; email locked to token |
-| Health / Test | `health.controller.js`, `test.controller.js` | Health check; echo |
-| Folders | `server/src/controllers/folder.controller.js` | Folder CRUD |
-| Files | `server/src/controllers/file.controller.js` | Upload, list, metadata, download (via `sendFileStream`), rename, move, delete |
-| Shares | `server/src/controllers/share.controller.js` | Share/update/revoke, with-me/by-me, access list, create/revoke links, public link info/contents/download |
-
-### Server — Middleware
-
-| Function | Path | Purpose |
-|----------|------|---------|
-| `authMiddleware` | `server/src/middleware/auth.middleware.js` | Requires a valid Firebase ID token |
-| `optionalAuthMiddleware` | `server/src/middleware/auth.middleware.js` | Public link routes: anonymous if no header, rejects invalid tokens |
-| `securityHeaders`, `cors`, `apiLimiter`, `authLimiter`, `shareCreateLimiter`, `linkAccessLimiter`, `linkFailureLimiter` | `server/src/middleware/security.js` | Headers, CORS allowlist, rate limits |
-| `errorHandler` | `server/src/middleware/errorHandler.js` | JSON errors with optional `code`; hides internal 500 details |
-| `logger`, `redactUrl` | `server/src/middleware/logger.js` | Request log with token redaction |
-
-### Server — Services
-
-| Function | Path | Purpose |
-|----------|------|---------|
-| User service | `server/src/services/user.service.js` | `getUsers`, `createUser`, `getUserByEmail`, `getUserById`, `updateUser`, `deleteUser`, `getUserByFirebaseUid` |
-| `requireFileAccess`, `requireFolderAccess`, `hasAtLeast`, `isFolderWithin` | `server/src/services/access.service.js` | Central permission checks (owner/editor/viewer) and folder-tree containment |
-| Folder service | `server/src/services/folder.service.js` | `createFolder`, `getFolders`, `getFolderById` (returns `access`), `renameFolder`, `deleteFolder`, validators |
-| File service | `server/src/services/file.service.js` | `uploadFile` (encrypted; into shared folders for editors), `getFiles`, `getFileById` (returns `access`), `getFileForDownload`, `openFileStream`, `renameFile`, `moveFile` (owner only), `deleteFile`, `getOrCreatePostgresUserId` |
-| Share service | `server/src/services/share.service.js` | `resolvePermission`, `shareWithUser`, `updateUserSharePermission`, `revokeUserShare`, `createShareLink` (password), `revokeShareLink`, `loadActiveLink`, `resolveShareLink`, `getSharedWithMe`, `getSharedByMe`, `getResourceAccess` |
-| Link service | `server/src/services/link.service.js` | `getLinkInfo`, `getLinkFolderContents`, `getLinkFileForDownload` (folder links confined to tree) |
-| `storageService` | `server/src/services/storage.service.js` | Local disk storage: encrypted `saveFile`, decrypting `getFileStream` with tamper hold-back, `deleteFile`, `fileExists` |
-| `getHealthStatus` | `server/src/services/health.service.js` | Static health response |
-
-### Server — Utilities, Config & Scripts
-
-| File | Path | Purpose |
-|------|------|---------|
-| `fileValidator` | `server/src/utils/fileValidator.js` | Filename/ID validation, magic bytes, size and type whitelist |
-| `crypto` | `server/src/utils/crypto.js` | AES-256-GCM file encryption, scrypt link passwords, token hashing |
-| `sendFile` | `server/src/utils/sendFile.js` | Safe download headers and stream abort on integrity failure |
-| `authHelpers` | `server/src/utils/authHelpers.js` | `getVerifiedEmail` |
-| `AppError` | `server/src/utils/AppError.js` | Operational errors with optional `code` |
-| DB pool / Env / Firebase Admin | `server/src/config/*.js` | Configuration |
-| Env | `server/.env` (git-ignored), `server/.env.example` | DB, Firebase Admin, **`FILE_ENCRYPTION_KEY`** (back it up), `CORS_ORIGINS`, limits |
-| Migrations | `server/migrate_feature29_shares.mjs`, `server/migrate_feature30_sharing_api.mjs` | Sharing tables; link passwords, access counts, `files.is_encrypted`, `files.uploaded_by_uid`, indexes (idempotent) |
-| `encrypt_existing_files.mjs` | `server/` | Encrypts pre-encryption files (dry run by default, `--apply` to run) |
-| Backups | `server/backups/` (git-ignored) | Pre-migration JSON/SQL backups |
+| File | Purpose |
+|---|---|
+| `context/SyncContext.tsx` | Sync engine (socket, cursor catch-up, backoff, NetInfo, AppState, event bus, unread count) |
+| `components/SyncTasks.tsx` | Background jobs: notes outbox flush, offline-file refresh |
+| `components/SyncStatusBadge.tsx` | Status indicator |
+| `services/sync.service.ts`, `device.ts` | Socket + change-feed API, device id, storage helpers |
+| `services/notes.service.ts` | Notes API, offline cache, outbox, conflict store |
+| `services/notification.service.ts` | Notifications API (+ push token calls) |
+| `services/offline.service.ts` | Offline files (native) |
+| `services/pushNotification.service.ts` | Expo push registration (another session) |
+| `services/api.ts` | Network-error detection, PUT uploads, error codes/details |
+| `services/file.service.ts` | `replaceFile` |
+| `app/notes.tsx`, `components/notes/NoteEditorModal.tsx` | Notes list and editor with conflict resolution |
+| `app/notifications.tsx` | Notification centre |
+| `app/index.tsx` | Sync card, alerts, offline files |
+| `hooks/useFileExplorer.ts`, `components/explorer/FileExplorerScreen.tsx`, `FileCard.tsx`, `modals/UploadModal.tsx` | Live refresh, notes section, new version, offline toggle |
+| `app/_layout.tsx`, `components/app-tabs*.tsx` | SyncProvider, Notes & Alerts tabs |
 
 ---
 
-## 5. Duplicate Code
+## 5. Security mechanisms (current)
 
-| # | Duplication | Locations | Recommendation |
-|---|-------------|-----------|----------------|
-| 1 | **Redundant `dotenv.config()`** | `config/db.js`, `config/env.js`, `config/firebase.js` | Call once in the entry point |
-| 2 | **Animated icon native/web** | `animated-icon.tsx`, `animated-icon.web.tsx` | Expected for platform files, but `AnimatedIcon` itself is unused |
-| 3 | **Save/share prompt after download** | `hooks/useFileExplorer.ts`, `app/s/[token].tsx` | Extract a shared `promptSaveOrShare()` helper |
+- Firebase ID token verification on every protected HTTP route and on every real-time connection (sockets closed at token expiry).
+- Central permission checks (owner / editor / viewer) for files, folders and notes; notes inherit folder sharing; root notes private.
+- IDOR protection tested for files, folders, notes, notifications, devices, shares, links and activity (changing ids returns 403/404).
+- Real-time and change-feed events delivered only to users with current access; revocation stops delivery immediately.
+- Optimistic concurrency (versions) so concurrent edits never silently overwrite.
+- AES-256-GCM encryption at rest (local and S3), tamper detection, secrets never logged; scrypt link passwords; hashed link tokens.
+- zod validation with strict bodies; control-character stripping; size limits (100kb JSON, 1MB notes, 50MB files).
+- Rate limits: general, auth, share creation, link access, failed-attempt lockout.
+- helmet headers, CORS allowlist (HTTP + Socket.IO), production config checks.
+- Error responses never include stack traces, SQL errors, storage paths, credentials or internal user ids.
 
 ---
 
-## 6. Known Issues
+## 6. Known Issues & Limitations
 
 ### 🔴 High
 
-| # | Issue | Location | Details |
-|---|-------|----------|---------|
-| 1 | **Share links point to localhost** | `utils/shareTargets.ts` | Without `EXPO_PUBLIC_WEB_URL` set to a reachable address, links sent via WhatsApp cannot be opened on other devices |
-| 2 | **No HTTPS yet** | Deployment | Data is encrypted at rest, but not in transit until the API is served over TLS |
-| 3 | **Encryption key must be backed up** | `server/.env` | Losing `FILE_ENCRYPTION_KEY` makes every uploaded file unreadable; key lives on the same server as the files (use a KMS in production) |
+| # | Issue | Details |
+|---|-------|---------|
+| 1 | **App not tested on a device/browser** | All new screens type-check and bundle, but runtime behaviour on Android/iOS/web is unverified |
+| 2 | **Share links point to localhost** | Set `EXPO_PUBLIC_WEB_URL` to a reachable address |
+| 3 | **No HTTPS yet** | Encryption in transit requires deploying behind TLS |
+| 4 | **Encryption key backup** | Losing `FILE_ENCRYPTION_KEY` makes stored files unreadable; key lives on the same server (use a KMS in production) |
 
 ### 🟠 Medium
 
-| # | Issue | Location | Details |
-|---|-------|----------|---------|
-| 4 | **No real-time sync** | Client/Server | Other devices and recipients only see changes after refreshing |
-| 5 | **No migrations for base tables** | Server | `users`/`folders`/`files` structure only partly scripted |
-| 6 | **Tests use the real database** | `server/test_*.mjs` | Suites insert and clean up data in the development DB; no isolated test DB or `npm test` |
-| 7 | **Email enumeration via sharing** | `POST /api/shares` | Response reveals whether an email has an account (rate-limited to 30/15 min per user) |
-| 8 | **No database pool error handler** | `server/src/config/db.js` | No `pool.on('error')`; an idle client disconnect can crash the server |
-| 9 | **Deleting a user who owns files likely fails** | `DELETE /api/users/:id` | `files.owner_id` is a required FK, so the delete is expected to error (not yet tested); the Firebase account is not removed |
-| 10 | **New screens not device-tested** | Client | Share dialog, Shared tab, link page and mobile upload/download pass type-check and bundle builds only |
-| 11 | **Outdated packages** | Client/Server | `expo-doctor` reports 7 SDK packages behind patch versions; `npm audit` warnings not reviewed |
+| # | Issue | Details |
+|---|-------|---------|
+| 5 | **Tests use the development database** | `npm test` defaults to `.env` DB; set `TEST_DB_NAME` to isolate. Test rows are cleaned up after each run |
+| 6 | **S3 driver unverified against a real provider** | Tested with an in-memory S3 only |
+| 7 | **Push delivery not configured** | Needs EAS `projectId`, `PUSH_ENABLED=true`, physical device |
+| 8 | **Email enumeration via sharing** | Rate-limited (30/15 min/user) but not hidden |
+| 9 | **Outdated packages / npm audit** | `expo-doctor` reports 7 packages behind patch versions; `npm audit` warnings unreviewed |
+| 10 | **Offline notes: edits to a note created offline and then moved** | Moving notes requires a connection (shown as an error offline) |
 
 ### 🔵 Low
 
-| # | Issue | Location | Details |
-|---|-------|----------|---------|
-| 12 | **Owner UID visible to shared users** | Folder API responses | `owner_firebase_uid` is returned to recipients (not secret, but unnecessary) |
-| 13 | **Unowned legacy seed record** | `files` id=11 (`resume.pdf`) | Fake storage path and no owner; unreachable by any user |
-| 14 | **Placeholder users from uploads** | `getOrCreatePostgresUserId` | May create users with `<uid>@sharesync.local` emails |
-| 15 | **`test_db.js` typo** | `server/test_db.js:1` | `import irebaseApp`; tests Firebase, not the DB |
-| 16 | **`DB_PORT` passed as string** | `server/src/config/db.js:14` | Not parsed as an integer |
-| 17 | **Branding remnants** | `app-tabs.web.tsx`, `app.json` | Web tab bar links to Expo docs; app slug is still `client` |
-| 18 | **Dead code** | `hint-row.tsx`, `AnimatedIcon` | Unused components |
-| 19 | **`ThemedView` unused props** | `themed-view.tsx` | `lightColor`/`darkColor` accepted but ignored |
-| 20 | **Health service quirks** | `health.service.js:5`, `health.controller.js` | `};;` and response key `sucess` |
-| 21 | **Collapsible chevron rotation inverted** | `client/src/components/ui/collapsible.tsx:26` | 90deg when closed, -90deg when open |
+| # | Issue | Details |
+|---|-------|---------|
+| 11 | Owner UID visible to shared users in folder responses | Not secret, but unnecessary |
+| 12 | Unowned legacy seed record `files` id=11 | Unreachable by any user |
+| 13 | Placeholder users from uploads (`<uid>@sharesync.local`) | |
+| 14 | `ThemedView` ignores `lightColor`/`darkColor`; unused `hint-row.tsx`; collapsible chevron rotation inverted | Cosmetic |
+| 15 | `SHARESYNC_RESUME_CHECKPOINT.md` duplicates parts of this report and states ~85% completion | This file is authoritative |
 
-### ✅ Resolved since last update
+### ✅ Resolved in this phase
 
-- Express Router import bug in `health.routes.js` / `test.routes.js` (now `import { Router } from "express"`)
-- `client/.env` and DB backups were tracked in git (now ignored and untracked)
-- `env.js` default `"devlopment"` typo
-- Explore screen boilerplate (replaced by the File Explorer)
-- Firebase ID token shown on Login/Home screens
-- Open CORS (`*`), no rate limiting, no security headers
-- Email takeover via `PATCH /api/users/:id`; legacy-account claiming via unverified email
-- Mobile upload did nothing / mobile download did not save
-- Shared users could not access anything (permissions now enforced via `access.service.js`)
+- No `pool.on('error')` handler; `DB_PORT` passed as string
+- `test_db.js` typo (now checks Firebase Admin + DB)
+- Health response typo `sucess`, `};;`
+- Web tab bar linking to Expo docs (replaced by sync status)
+- No migrations for base tables / no migration runner
+- User deletion left encrypted files on disk (now removes all data atomically)
+- Small tampered files returned partial data before failing (now rejected before any byte is sent)
+- Push token unregister route shadowed by `DELETE /:id` (found by the push suite, fixed)
 
 ---
 
-## 7. Last Updated
+## 7. Next Development Phase
+
+1. **Run the app on Android, iOS and web** and fix runtime issues (sync, notes, notifications, offline, share dialog).
+2. **Deploy**: HTTPS reverse proxy, managed PostgreSQL (`DB_SSL=true`), S3/R2 bucket (`STORAGE_DRIVER=s3`), `CORS_ORIGINS`, `EXPO_PUBLIC_WEB_URL`, `npm run migrate` on release; wire `npm test` into CI.
+3. **Push notifications live**: EAS project id + `PUSH_ENABLED=true`.
+4. **Folder move, recursive delete, sort by type.**
+5. **Configure Google OAuth client IDs and test Google Sign-In on devices.**
+6. **Activity log screen; approvals/team workflows.**
+
+---
+
+## 8. Last Updated
 
 | Date | Changes |
 |------|---------|
+| 2026-11-20 | **Google Sign-In, profile management, file preview (Features 51–53).**<br>1. **Server:** `POST /api/auth/session` (sign in or create from a verified token; 409 `ACCOUNT_EXISTS` prevents takeover, 404 `REGISTRATION_REQUIRED` for unverified emails; auth rate limit applied); `GET/PATCH/DELETE /api/users/me` (profile + usage stats, zod-validated name, account deletion requiring sign-in within 5 minutes, removes all data and the Firebase account).<br>2. **Client:** "Continue with Google" on login/signup (web popup; native expo-auth-session, hidden safely when not configured), "Forgot password?"; Profile & account screen (name, verification email, password change with re-auth, reset link, usage, devices, sign out, delete account with re-auth); tap-to-preview for files with allow-listed rendering. Added `expo-auth-session`, `expo-crypto`, `react-native-webview`.<br>3. **Tests:** new `test_profile_google.mjs` (32). Full run: **664 passed, 0 failed** (11 suites). Client `tsc` clean; web + Android bundles build. Not yet run on a device. |
+| 2026-11-20 | **Features D–H (Features 37–50): real-time sync, notes & documents, notifications, security, platform.**<br>1. **Database:** migration runner `server/migrate.mjs` (`npm run migrate`, advisory lock, transactional, `schema_migrations`); migrations 001 (baseline core tables), 002–003 (wrap feature 29/30), 004 (`notes`, `notifications`, `activity_log`, `sync_events`, `sync_devices`, `push_tokens`, `version` columns), 005 (`sync_state`). Backup taken first; verified idempotent and on a brand-new database.<br>2. **Real-time sync:** Socket.IO with Firebase-authenticated handshakes, per-user rooms, token-expiry disconnect; change feed with cursor catch-up, pagination and prune watermark; device tracking; client `SyncProvider` with reconnect backoff, NetInfo/AppState resync, status badge; explorer, Shared tab and notes refresh live.<br>3. **Conflict detection:** versions on files/folders/notes; `expected_version` on rename/move/delete/notes; new `PUT /api/files/:id/content`; 409 `CONFLICT` with current copy; note editor offers keep mine / use theirs / save as copy.<br>4. **Offline:** notes cached with an outbox flushed on reconnect (conflicts kept); files can be kept offline on Android/iOS and are refreshed or removed automatically.<br>5. **Notes & documents:** `/api/notes` CRUD with folder-based permissions, search, kinds; Notes tab, editor, notes inside explorer folders.<br>6. **Notifications:** shares, permission changes, revocations, uploads/deletes/notes in shared folders; history, unread count, mark read/all, delete, real-time delivery and read-state sync; Alerts tab. Push tokens + Expo transport (another session added client registration and a push suite; fixed a route-ordering bug it found).<br>7. **Security/platform:** zod validation, structured JSON logging with redaction and request ids, readiness probe, env validation, DB pool hardening, S3-compatible storage driver with shared `DecryptStream`, full account deletion, JSON 404s, safe error format, `npm test` runner.<br>8. **Tests:** new `test_phase_dh.mjs` (144). Full run: **632 passed, 0 failed** (10 suites). Client: `tsc` clean; web + Android bundles build. Not yet run on a device. |
+| 2026-11-20 | **Comprehensive Audit & Status Verification of Features D through H:**<br>1. Audited actual codebase state following master-build execution for Features D, E, F, G, H.<br>2. Verified all 5 database migrations applied and verified clean migration runner on fresh database.<br>3. Verified dual-driver storage architecture (`LocalDriver` and `S3Driver`) with encryption roundtrips.<br>4. Verified Socket.IO real-time sync with authenticated user rooms, token expiration disconnect, change feed, and offline catch-up.<br>5. Verified Notes and Document workspace with PostgreSQL persistence, folder nesting, and 409 conflict detection.<br>6. Verified Notifications system with real-time push, unread badges, history pagination, and mark-read.<br>7. Verified 9 backend test suites passing with **612 passed assertions, 0 failed**.<br>8. Verified client TypeScript compilation (`npx tsc --noEmit`) passes with **0 errors**.<br>9. Updated progress report and generated `SHARESYNC_RESUME_CHECKPOINT.md`. |
 | 2026-11-20 | **File & Folder Sharing — Phases 3 & 4 (Features 30–35):**<br>1. **Database:** `server/migrate_feature30_sharing_api.mjs` (idempotent, backup taken first) adds `share_links.password_hash`, `access_count`, `last_accessed_at`, `files.is_encrypted`, `files.uploaded_by_uid` and lookup indexes.<br>2. **Permission enforcement:** new `access.service.js`; every file/folder endpoint now allows owner / editor / viewer according to direct or inherited shares. Editors upload into shared folders (files stay owned by the folder owner, uploader recorded); move, share and deleting the shared root stay owner-only.<br>3. **Sharing API:** `/api/shares` (share by email, change permission, revoke, with-me, by-me, who-has-access, create/revoke links) and public `/api/public/links/:token` (info, folder contents, download) with optional login.<br>4. **Links:** view-only; token shown once and stored as SHA-256; expiry up to 1 year or never; optional scrypt-hashed password via `X-Share-Password`; optional sign-in requirement; folder links confined to the shared tree; error codes `PASSWORD_REQUIRED`, `PASSWORD_INCORRECT`, `SIGN_IN_REQUIRED`, `RECIPIENT_NOT_FOUND`.<br>5. **Encryption at rest:** AES-256-GCM per-file keys derived from `FILE_ENCRYPTION_KEY`; last chunk held back until the auth tag verifies so tampered files are never delivered complete; legacy plaintext still readable; `encrypt_existing_files.mjs`; server refuses to start without a key; `server/.env.example` added.<br>6. **Security:** link brute-force lockout (10 failures/15 min), link access and share-creation rate limits, token redaction in logs, `no-store`/`nosniff` on downloads, optional-auth middleware that rejects forged tokens.<br>7. **App:** `ShareModal` (send to user, manage people, links with expiry/password/sign-in, WhatsApp, More apps, Copy link, send a file copy), **Shared** tab (`app/shared.tsx`), reusable `FileExplorerScreen` with permission-aware actions, public link page `app/s/[token].tsx`, `sharesync://` deep-link scheme, app name "ShareSync", return-to-link after sign-in. Added `expo-clipboard`.<br>8. **Testing:** new `server/test_sharing_api.mjs` (132 assertions) covering viewer/editor/stranger access, revoke, file vs folder shares, links, passwords, sign-in, expiry, containment, encryption on disk, tamper detection (including a 3.4 MB file), CORS preflight, and lockout. All suites: **468 passed, 0 failed**. Client: `tsc --noEmit` clean; web and Android bundles build. |
 | 2026-11-19 | **Mobile upload & download (Feature 28):** native document picker (`expo-document-picker`) in `UploadModal`; native downloads to app cache with progress via `expo-file-system`, then "Save to device" (Android folder picker) or "Save / Share" (`expo-sharing`); download progress banner and success/error notices in the explorer; readable error messages for 401/403/404/429. |
 | 2026-11-19 | **Security hardening (Feature 36):** untracked `client/.env` and DB backups and git-ignored them; blocked email changes via `PATCH /api/users/:id` and foreign emails on `POST /api/users`; legacy-account linking only for Firebase-verified emails; removed on-screen ID token display; added `helmet`, `express-rate-limit` (general + auth), CORS allowlist (`CORS_ORIGINS`), 100kb JSON limit, safe 500 messages, strict storage path check; debug routes disabled in production; fixed Router import bug in health/test routes. All 336 existing assertions still passing. |

@@ -9,6 +9,7 @@ export interface FolderItem {
   files?: FileItem[];
   /** Caller's access level (returned by GET /api/folders/:id) */
   access?: 'owner' | 'editor' | 'viewer';
+  version?: number;
 }
 
 export interface FileItem {
@@ -21,6 +22,8 @@ export interface FileItem {
   updated_at?: string;
   /** Caller's access level (returned by GET /api/files/:id) */
   access?: 'owner' | 'editor' | 'viewer';
+  /** Increments on every change; used for conflict detection */
+  version?: number;
 }
 
 export interface BreadcrumbItem {

@@ -104,3 +104,63 @@ export async function loginController(req, res, next) {
         next(error);
     }
 }
+
+/**
+ * POST /api/auth/session  { name? }
+ * "Sign in or create": used after Google Sign-In (and safe for any provider).
+ * - Existing account (by Firebase UID, or a legacy record with the same VERIFIED email) → returned.
+ * - No account yet and the email is verified by the identity provider (always true for Google)
+ *   → a ShareSync account is created from the verified token (name from Google profile).
+ * - Unverified email and no account → 404 REGISTRATION_REQUIRED (use the normal signup flow).
+ * - The email already belongs to a different ShareSync account → 409 ACCOUNT_EXISTS (no takeover).
+ */
+export async function sessionController(req, res, next) {
+    try {
+        if (!req.user || !req.user.uid) {
+            throw new AppError("Invalid or missing token payload", 401);
+        }
+        const uid = req.user.uid;
+        const verifiedEmail = getVerifiedEmail(req.user);
+        const provider = req.user.firebase?.sign_in_provider || null;
+
+        let user = await getUserByFirebaseUid(uid, verifiedEmail);
+        let created = false;
+
+        if (!user) {
+            if (!verifiedEmail) {
+                throw new AppError("Please finish creating your account first", 404, "REGISTRATION_REQUIRED");
+            }
+            const existing = await getUserByEmail(verifiedEmail);
+            if (existing) {
+                throw new AppError(
+                    "An account with this email already exists. Sign in with your email and password instead.",
+                    409,
+                    "ACCOUNT_EXISTS"
+                );
+            }
+            const rawName = typeof req.body?.name === "string" && req.body.name.trim()
+                ? req.body.name
+                : (typeof req.user.name === "string" && req.user.name.trim() ? req.user.name : verifiedEmail.split("@")[0]);
+            const name = rawName.replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, 100) || "ShareSync User";
+            try {
+                user = await createUser({ name, email: verifiedEmail, firebase_uid: uid });
+                created = true;
+            } catch (err) {
+                if (err.code === "23505") {
+                    throw new AppError("An account with this email already exists.", 409, "ACCOUNT_EXISTS");
+                }
+                throw err;
+            }
+        }
+
+        return res.status(created ? 201 : 200).json({
+            success: true,
+            message: created ? "Account created" : "Signed in",
+            data: user,
+            created,
+            provider
+        });
+    } catch (error) {
+        next(error);
+    }
+}

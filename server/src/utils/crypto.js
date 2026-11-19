@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { Transform } from "stream";
 import AppError from "./AppError.js";
 
 /**
@@ -61,6 +62,70 @@ export function createDecryptStream(header, tag) {
     const decipher = crypto.createDecipheriv("aes-256-gcm", deriveFileKey(salt), iv);
     decipher.setAuthTag(tag);
     return decipher;
+}
+
+/**
+ * Streaming decryptor for the on-disk format, usable with any byte stream (local file, S3 body).
+ *
+ * - parses the 32-byte header from the first bytes,
+ * - keeps the trailing 16 bytes aside as the GCM auth tag,
+ * - holds back the most recent decrypted chunk until the tag verifies in flush(),
+ *   so a tampered file can never be delivered complete.
+ */
+export class DecryptStream extends Transform {
+    constructor() {
+        super();
+        this.header = Buffer.alloc(0);
+        this.decipher = null;
+        this.tail = Buffer.alloc(0);
+        this.held = null;
+    }
+
+    _transform(chunk, _enc, cb) {
+        try {
+            let data = chunk;
+            if (!this.decipher) {
+                this.header = Buffer.concat([this.header, data]);
+                if (this.header.length < ENC_HEADER_LEN) return cb();
+                data = this.header.subarray(ENC_HEADER_LEN);
+                this.header = this.header.subarray(0, ENC_HEADER_LEN);
+                if (!this.header.subarray(0, 4).equals(ENC_MAGIC)) {
+                    return cb(new AppError("Stored file is corrupted or not encrypted", 500));
+                }
+                const salt = this.header.subarray(4, 4 + SALT_LEN);
+                const iv = this.header.subarray(4 + SALT_LEN, ENC_HEADER_LEN);
+                this.decipher = crypto.createDecipheriv("aes-256-gcm", deriveFileKey(salt), iv);
+            }
+            const combined = Buffer.concat([this.tail, data]);
+            if (combined.length <= TAG_LEN) {
+                this.tail = combined;
+                return cb();
+            }
+            const body = combined.subarray(0, combined.length - TAG_LEN);
+            this.tail = combined.subarray(combined.length - TAG_LEN);
+            const out = this.decipher.update(body);
+            if (this.held && this.held.length) this.push(this.held);
+            this.held = out;
+            cb();
+        } catch (err) {
+            cb(err);
+        }
+    }
+
+    _flush(cb) {
+        try {
+            if (!this.decipher || this.tail.length !== TAG_LEN) {
+                return cb(new AppError("Stored file is corrupted", 500));
+            }
+            this.decipher.setAuthTag(this.tail);
+            const last = this.decipher.final(); // throws if the data was tampered with
+            if (this.held && this.held.length) this.push(this.held);
+            if (last.length) this.push(last);
+            cb();
+        } catch (err) {
+            cb(err);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

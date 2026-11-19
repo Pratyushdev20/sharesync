@@ -5,8 +5,10 @@ import {
     getFileForDownload,
     renameFile,
     moveFile,
-    deleteFile
+    deleteFile,
+    replaceFileContent
 } from "../services/file.service.js";
+import { recordActivity } from "../services/events.service.js";
 import AppError from "../utils/AppError.js";
 import { sendFileStream } from "../utils/sendFile.js";
 
@@ -95,6 +97,17 @@ export async function downloadFileController(req, res, next) {
         const { id } = req.params;
 
         const download = await getFileForDownload(id, authUid);
+        if (download.fileRecord.version !== undefined) {
+            res.setHeader("X-File-Version", String(download.fileRecord.version));
+        }
+        recordActivity({
+            actorUid: authUid,
+            action: "file.downloaded",
+            resourceType: "file",
+            resourceId: download.fileRecord.id,
+            ownerUid: download.ownerUid,
+            metadata: { name: download.fileRecord.name }
+        });
         sendFileStream(res, next, download);
     } catch (error) {
         next(error);
@@ -115,7 +128,7 @@ export async function renameFileController(req, res, next) {
             throw new AppError("File name is required", 400);
         }
 
-        const file = await renameFile(id, authUid, name);
+        const file = await renameFile(id, authUid, name, { expectedVersion: req.body?.expected_version });
 
         res.status(200).json({
             success: true,
@@ -137,7 +150,7 @@ export async function moveFileController(req, res, next) {
         const { id } = req.params;
         const targetFolderId = req.body?.target_folder_id !== undefined ? req.body.target_folder_id : req.body?.folder_id;
 
-        const file = await moveFile(id, authUid, targetFolderId);
+        const file = await moveFile(id, authUid, targetFolderId, { expectedVersion: req.body?.expected_version });
 
         res.status(200).json({
             success: true,
@@ -158,12 +171,35 @@ export async function deleteFileController(req, res, next) {
         const authUid = req.user.uid;
         const { id } = req.params;
 
-        const result = await deleteFile(id, authUid);
+        const result = await deleteFile(id, authUid, { expectedVersion: req.query?.expected_version });
 
         res.status(200).json({
             success: true,
             message: "File deleted successfully",
             data: result
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+/**
+ * PUT /api/files/:id/content
+ * Uploads a new version of an existing file (owner or editor).
+ * Send `expected_version` (form field) to detect conflicts: 409 CONFLICT if it changed meanwhile.
+ */
+export async function replaceFileContentController(req, res, next) {
+    try {
+        if (!req.file) {
+            throw new AppError("No file provided for upload", 400);
+        }
+        const file = await replaceFileContent(req.params.id, req.user.uid, req.file, {
+            expectedVersion: req.body?.expected_version
+        });
+        res.status(200).json({
+            success: true,
+            message: "New version uploaded",
+            data: file
         });
     } catch (error) {
         next(error);

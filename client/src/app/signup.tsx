@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 
 export default function SignupScreen() {
   const [name, setName] = useState("");
@@ -129,6 +130,9 @@ export default function SignupScreen() {
 
       {!!message && <Text style={styles.message}>{message}</Text>}
 
+      <Text style={styles.orText}>or</Text>
+      <GoogleSignInButton label="Sign up with Google" onError={(m) => setMessage(m)} />
+
       <View style={styles.footer}>
         <Text style={styles.footerText}>Already have an account? </Text>
         <Pressable onPress={() => router.push("/login")}>
@@ -189,6 +193,11 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     color: "#dc2626",
     fontSize: 14,
+  },
+  orText: {
+    color: "#94a3b8",
+    marginTop: 14,
+    fontSize: 13,
   },
   footer: {
     flexDirection: "row",

@@ -1,9 +1,16 @@
 import React, { useEffect } from 'react';
 import { ActivityIndicator, View, StyleSheet, useColorScheme } from 'react-native';
-import { DarkTheme, DefaultTheme, ThemeProvider, Slot, useRouter, useSegments } from 'expo-router';
+import { DarkTheme, DefaultTheme, ThemeProvider, Slot, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { SyncProvider } from '@/context/SyncContext';
+import { SyncTasks } from '@/components/SyncTasks';
+import {
+  registerForPushNotificationsAsync,
+  setupPushNotificationListeners,
+  checkInitialNotificationResponse,
+} from '@/services/pushNotification.service';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { Colors } from '@/constants/theme';
@@ -23,9 +30,12 @@ function NavigationGuard() {
   const inAuthGroup = currentSegment === 'login' || currentSegment === 'signup';
   // Share links (/s/<token>) are public: the server decides whether sign-in is required
   const isPublicLink = currentSegment === 's';
+  // Navigation requested before the root navigator has mounted is silently ignored,
+  // so wait until the navigation state exists before redirecting.
+  const navigationReady = Boolean(useRootNavigationState()?.key);
 
   useEffect(() => {
-    if (loading || isPublicLink) return;
+    if (loading || isPublicLink || !navigationReady) return;
 
     if (!user && !inAuthGroup) {
       // Unauthenticated user trying to access protected screen -> redirect to login
@@ -34,7 +44,7 @@ function NavigationGuard() {
       // Authenticated user on login/signup screen -> back to a pending share link, or home
       router.replace((takePendingRedirect() || '/') as any);
     }
-  }, [user, loading, inAuthGroup, isPublicLink]);
+  }, [user, loading, inAuthGroup, isPublicLink, navigationReady]);
 
   // Display loading screen while checking authentication state to prevent flashes
   if (loading) {
@@ -50,6 +60,19 @@ function NavigationGuard() {
     return <Slot />;
   }
 
+  // Signed out on a protected route: keep a navigator mounted (so the redirect to /login
+  // can run) but cover it with a loading screen so protected content is never shown.
+  if (!user) {
+    return (
+      <View style={{ flex: 1 }}>
+        <Slot />
+        <View style={[StyleSheet.absoluteFill, styles.loadingContainer, { backgroundColor: colors.background }]}>
+          <ActivityIndicator size="large" color="#2563eb" />
+        </View>
+      </View>
+    );
+  }
+
   // If authenticated on protected routes, render tabs navigation
   return (
     <>
@@ -59,14 +82,42 @@ function NavigationGuard() {
   );
 }
 
+function NativePushController() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!user) return;
+
+    // 1. Register push token for current authenticated user
+    registerForPushNotificationsAsync(user.uid);
+
+    // 2. Set up foreground notification and tap response listeners
+    const cleanupListeners = setupPushNotificationListeners(router);
+
+    // 3. Handle cold-start launch from a notification tap
+    checkInitialNotificationResponse(router);
+
+    return () => {
+      cleanupListeners();
+    };
+  }, [user, router]);
+
+  return null;
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
   return (
     <AuthProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <NavigationGuard />
-      </ThemeProvider>
+      <SyncProvider>
+        <SyncTasks />
+        <NativePushController />
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <NavigationGuard />
+        </ThemeProvider>
+      </SyncProvider>
     </AuthProvider>
   );
 }

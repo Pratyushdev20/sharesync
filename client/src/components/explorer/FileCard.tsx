@@ -14,6 +14,13 @@ interface FileCardProps {
   onMove?: (file: FileItem) => void;
   onDelete?: (file: FileItem) => void;
   onShare?: (file: FileItem) => void;
+  /** Tap the file to open the in-app preview */
+  onOpen?: (file: FileItem) => void;
+  /** Upload a new version (owner/editor) */
+  onReplace?: (file: FileItem) => void;
+  /** Keep / stop keeping a copy on this device (mobile only) */
+  onToggleOffline?: (file: FileItem) => void;
+  isOffline?: boolean;
   /** Extra line under the name, e.g. "Shared by Rahul • Viewer". */
   subtitle?: string;
 }
@@ -26,6 +33,10 @@ export function FileCard({
   onMove,
   onDelete,
   onShare,
+  onOpen,
+  onReplace,
+  onToggleOffline,
+  isOffline,
   subtitle,
 }: FileCardProps) {
   const theme = useTheme();
@@ -34,7 +45,7 @@ export function FileCard({
   if (viewMode === 'list') {
     return (
       <View style={[styles.listRow, { backgroundColor: theme.background, borderBottomColor: '#e2e8f0' }]}>
-        <View style={styles.leftInfo}>
+        <Pressable style={styles.leftInfo} onPress={onOpen ? () => onOpen(file) : undefined} disabled={!onOpen} accessibilityRole="button" accessibilityLabel={`Preview ${file.name}`}>
           <View style={[styles.fileIconBadge, { backgroundColor: `${fileTypeInfo.color}15` }]}>
             <ThemedText style={{ fontSize: 16 }}>📄</ThemedText>
           </View>
@@ -51,7 +62,7 @@ export function FileCard({
               </ThemedText>
             )}
           </View>
-        </View>
+        </Pressable>
 
         <View style={styles.actionButtons}>
           <Pressable
@@ -69,6 +80,26 @@ export function FileCard({
               accessibilityLabel="Share file"
             >
               <ThemedText style={{ fontSize: 13 }}>🔗</ThemedText>
+            </Pressable>
+          )}
+
+          {onReplace && (
+            <Pressable
+              onPress={() => onReplace(file)}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Upload new version"
+            >
+              <ThemedText style={{ fontSize: 13 }}>⟳</ThemedText>
+            </Pressable>
+          )}
+
+          {onToggleOffline && (
+            <Pressable
+              onPress={() => onToggleOffline(file)}
+              style={({ pressed }) => [styles.miniActionButton, isOffline && { backgroundColor: '#dcfce7' }, pressed && styles.pressed]}
+              accessibilityLabel={isOffline ? 'Remove offline copy' : 'Make available offline'}
+            >
+              <ThemedText style={{ fontSize: 13 }}>{isOffline ? '✅' : '📥'}</ThemedText>
             </Pressable>
           )}
 
@@ -110,9 +141,9 @@ export function FileCard({
   return (
     <View style={[styles.gridCard, { backgroundColor: theme.backgroundElement, borderColor: '#e2e8f0' }]}>
       <View style={styles.gridTop}>
-        <View style={[styles.fileIconBadgeLarge, { backgroundColor: `${fileTypeInfo.color}20` }]}>
+        <Pressable onPress={onOpen ? () => onOpen(file) : undefined} disabled={!onOpen} accessibilityLabel={`Preview ${file.name}`} style={[styles.fileIconBadgeLarge, { backgroundColor: `${fileTypeInfo.color}20` }]}>
           <ThemedText style={{ fontSize: 26 }}>📄</ThemedText>
-        </View>
+        </Pressable>
 
         <View style={styles.gridActions}>
           <Pressable onPress={() => onDownload(file)} style={styles.gridActionButton} hitSlop={6}>
@@ -121,6 +152,21 @@ export function FileCard({
           {onShare && (
             <Pressable onPress={() => onShare(file)} style={styles.gridActionButton} hitSlop={6} accessibilityLabel="Share file">
               <ThemedText style={{ fontSize: 12 }}>🔗</ThemedText>
+            </Pressable>
+          )}
+          {onReplace && (
+            <Pressable onPress={() => onReplace(file)} style={styles.gridActionButton} hitSlop={6} accessibilityLabel="Upload new version">
+              <ThemedText style={{ fontSize: 12 }}>⟳</ThemedText>
+            </Pressable>
+          )}
+          {onToggleOffline && (
+            <Pressable
+              onPress={() => onToggleOffline(file)}
+              style={[styles.gridActionButton, isOffline && { backgroundColor: '#dcfce7' }]}
+              hitSlop={6}
+              accessibilityLabel={isOffline ? 'Remove offline copy' : 'Make available offline'}
+            >
+              <ThemedText style={{ fontSize: 12 }}>{isOffline ? '✅' : '📥'}</ThemedText>
             </Pressable>
           )}
           {onRename && (
@@ -141,7 +187,7 @@ export function FileCard({
         </View>
       </View>
 
-      <View style={styles.gridBottom}>
+      <Pressable style={styles.gridBottom} onPress={onOpen ? () => onOpen(file) : undefined} disabled={!onOpen}>
         <ThemedText type="smallBold" numberOfLines={1} style={{ color: theme.text }}>
           {file.name}
         </ThemedText>
@@ -160,7 +206,7 @@ export function FileCard({
             </ThemedText>
           </View>
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 }

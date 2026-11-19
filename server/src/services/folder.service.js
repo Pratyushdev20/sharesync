@@ -1,8 +1,9 @@
 import pool from "../config/db.js";
 import AppError from "../utils/AppError.js";
 import { requireFolderAccess } from "./access.service.js";
+import { audienceForFolder, publishChange } from "./events.service.js";
 
-const FOLDER_FIELDS = "id, name, owner_firebase_uid, parent_folder_id, created_at, updated_at";
+const FOLDER_FIELDS = "id, name, owner_firebase_uid, parent_folder_id, version, created_at, updated_at";
 
 /**
  * Validates a folder name.
@@ -96,7 +97,18 @@ export async function createFolder(callerUid, { name, parent_folder_id = null })
         [validName, ownerUid, ownerId, validParentId]
     );
 
-    return result.rows[0];
+    const created = result.rows[0];
+    await publishChange({
+        audience: await audienceForFolder(validParentId, ownerUid),
+        actorUid: callerUid,
+        eventType: "folder.created",
+        resourceType: "folder",
+        resourceId: created.id,
+        folderId: validParentId,
+        ownerUid,
+        payload: { name: created.name, version: created.version },
+    });
+    return created;
 }
 
 /**
@@ -167,7 +179,7 @@ export async function getFolderById(folderId, callerUid) {
     );
 
     const filesRes = await pool.query(
-        `SELECT id, name, size, mime_type, folder_id, created_at, updated_at
+        `SELECT id, name, size, mime_type, folder_id, version, created_at, updated_at
          FROM files
          WHERE folder_id = $1
          ORDER BY name ASC`,
@@ -179,6 +191,7 @@ export async function getFolderById(folderId, callerUid) {
         name: folder.name,
         owner_firebase_uid: folder.owner_firebase_uid,
         parent_folder_id: folder.parent_folder_id,
+        version: folder.version,
         created_at: folder.created_at,
         updated_at: folder.updated_at,
         access: permission,
@@ -190,11 +203,17 @@ export async function getFolderById(folderId, callerUid) {
 /**
  * Renames a folder (owner or editor).
  */
-export async function renameFolder(folderId, callerUid, newName) {
+export async function renameFolder(folderId, callerUid, newName, { expectedVersion } = {}) {
     const validId = validateFolderId(folderId);
     const validName = validateFolderName(newName);
 
     const { folder } = await requireFolderAccess(callerUid, validId, "editor", "rename this folder");
+    if (expectedVersion !== undefined && expectedVersion !== null && expectedVersion !== "" &&
+        Number(expectedVersion) !== Number(folder.version)) {
+        const err = new AppError("This folder was changed on another device. Refresh to see the latest version.", 409, "CONFLICT");
+        err.details = { currentVersion: Number(folder.version) };
+        throw err;
+    }
 
     if (folder.name === validName) {
         return {
@@ -202,6 +221,7 @@ export async function renameFolder(folderId, callerUid, newName) {
             name: folder.name,
             owner_firebase_uid: folder.owner_firebase_uid,
             parent_folder_id: folder.parent_folder_id,
+            version: folder.version,
             created_at: folder.created_at,
             updated_at: folder.updated_at
         };
@@ -211,13 +231,27 @@ export async function renameFolder(folderId, callerUid, newName) {
 
     const result = await pool.query(
         `UPDATE folders
-         SET name = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2
+         SET name = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND version = $3
          RETURNING ${FOLDER_FIELDS}`,
-        [validName, validId]
+        [validName, validId, folder.version]
     );
+    if (result.rows.length === 0) {
+        throw new AppError("This folder was changed on another device. Refresh to see the latest version.", 409, "CONFLICT");
+    }
 
-    return result.rows[0];
+    const renamed = result.rows[0];
+    await publishChange({
+        audience: await audienceForFolder(validId, folder.owner_firebase_uid),
+        actorUid: callerUid,
+        eventType: "folder.updated",
+        resourceType: "folder",
+        resourceId: renamed.id,
+        folderId: renamed.parent_folder_id,
+        ownerUid: folder.owner_firebase_uid,
+        payload: { name: renamed.name, previousName: folder.name, version: renamed.version },
+    });
+    return renamed;
 }
 
 /**
@@ -256,7 +290,29 @@ export async function deleteFolder(folderId, callerUid) {
         throw new AppError("Cannot delete folder: folder contains files. Please delete or move all contained files first", 400);
     }
 
+    const noteCheck = await pool.query(
+        "SELECT COUNT(*)::int as count FROM notes WHERE folder_id = $1",
+        [validId]
+    );
+    if (noteCheck.rows[0].count > 0) {
+        throw new AppError("Cannot delete folder: folder contains notes. Please delete or move all contained notes first", 400);
+    }
+
+    // Audience must be computed before the folder (and its shares) are gone
+    const audience = await audienceForFolder(validId, folder.owner_firebase_uid);
+
     await pool.query("DELETE FROM folders WHERE id = $1", [validId]);
+
+    await publishChange({
+        audience,
+        actorUid: callerUid,
+        eventType: "folder.deleted",
+        resourceType: "folder",
+        resourceId: validId,
+        folderId: folder.parent_folder_id,
+        ownerUid: folder.owner_firebase_uid,
+        payload: { name: folder.name },
+    });
 
     return {
         id: validId,

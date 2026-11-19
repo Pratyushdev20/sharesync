@@ -70,7 +70,7 @@ export async function renameFolderController(req, res, next) {
         const authUid = req.user.uid;
         const { id } = req.params;
         const { name } = req.body || {};
-        const folder = await renameFolder(id, authUid, name);
+        const folder = await renameFolder(id, authUid, name, { expectedVersion: req.body?.expected_version });
         res.status(200).json({
             success: true,
             message: "Folder renamed successfully",

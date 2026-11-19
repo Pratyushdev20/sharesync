@@ -114,6 +114,35 @@ export const fileService = {
   },
 
   /**
+   * Uploads a new version of an existing file (owner/editor).
+   * `expectedVersion` = the version the user is looking at; the server answers 409 CONFLICT
+   * if someone changed the file in the meantime.
+   */
+  async replaceFile(
+    id: string,
+    file: SelectedFile,
+    expectedVersion: number | undefined,
+    onProgress?: (progress: UploadProgress) => void
+  ): Promise<FileItem> {
+    const formData = new FormData();
+    if (Platform.OS === 'web' && file.fileObject) {
+      formData.append('file', file.fileObject, file.name);
+    } else {
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+      } as any);
+    }
+    if (expectedVersion) formData.append('expected_version', String(expectedVersion));
+    const response = await uploadFileWithProgress(`/api/files/${encodeURIComponent(id)}/content`, formData, onProgress, 'PUT');
+    if (!response.data) {
+      throw new Error('Upload completed but no file data returned.');
+    }
+    return response.data;
+  },
+
+  /**
    * Web: downloads the file and triggers the browser's save dialog.
    * Native: downloads the file into the app cache (with progress) and returns its location,
    * so the caller can let the user save or share it.

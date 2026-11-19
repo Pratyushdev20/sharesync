@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { View, StyleSheet, Modal, Pressable, ActivityIndicator, Platform } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
-import { SelectedFile } from '@/services/file.service';
+import { SelectedFile, fileService } from '@/services/file.service';
 import { UploadProgress } from '@/types/explorer';
 import { formatFileSize } from '@/utils/fileFormatters';
 
@@ -48,11 +48,31 @@ export function UploadModal({
     });
   };
 
-  const triggerFilePicker = () => {
-    if (Platform.OS === 'web' && fileInputRef.current) {
-      fileInputRef.current.click();
+  const triggerFilePicker = async () => {
+    if (Platform.OS === 'web') {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    // Android / iOS: open the system document picker
+    try {
+      const picked = await fileService.pickNativeFile();
+      if (!picked) return; // user cancelled
+
+      if (picked.size !== undefined && picked.size > MAX_FILE_SIZE) {
+        setError(`File exceeds the maximum limit of 50MB (${formatFileSize(picked.size)}).`);
+        setSelectedFile(null);
+        return;
+      }
+
+      setError(null);
+      setSelectedFile(picked);
+    } catch (err: any) {
+      setError(err?.message || 'Could not open the file picker.');
     }
   };
+
+  const actionVerb = Platform.OS === 'web' ? 'Click' : 'Tap';
 
   const handleStartUpload = async () => {
     if (!selectedFile) {
@@ -124,13 +144,13 @@ export function UploadModal({
                   {formatFileSize(selectedFile.size)} • {selectedFile.type || 'Unknown type'}
                 </ThemedText>
                 <ThemedText type="small" style={{ color: '#2563eb', marginTop: 8 }}>
-                  Click to choose a different file
+                  {actionVerb} to choose a different file
                 </ThemedText>
               </View>
             ) : (
               <View style={styles.dropzonePlaceholder}>
                 <ThemedText type="smallBold" style={{ color: theme.text }}>
-                  Click to browse files
+                  {actionVerb} to browse files
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: 4 }}>
                   Supports PDF, Office, images, audio, video & text

@@ -1,6 +1,32 @@
 import { Platform } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { Directory, File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { apiRequest, getApiBaseUrl, getAuthToken, uploadFileWithProgress } from './api';
 import { FileItem, UploadProgress } from '@/types/explorer';
+
+/** Result of a download on a native device: the file lives in the app cache until saved/shared. */
+export interface NativeDownloadResult {
+  uri: string;
+  name: string;
+  mimeType: string;
+}
+
+/** Makes a filename safe to use on the device file system. */
+function toSafeLocalName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim();
+  return cleaned || 'download';
+}
+
+/** Turns native download errors (which only carry the HTTP status) into readable messages. */
+function describeDownloadError(err: any): string {
+  const msg = String(err?.message || err || '');
+  if (/\b401\b/.test(msg)) return 'Your session has expired. Please sign in again.';
+  if (/\b403\b/.test(msg)) return 'You do not have permission to download this file.';
+  if (/\b404\b/.test(msg)) return 'This file no longer exists on the server.';
+  if (/\b429\b/.test(msg)) return 'Too many requests. Please wait a moment and try again.';
+  return msg ? `Download failed: ${msg}` : 'Download failed. Please check your connection.';
+}
 
 export interface SelectedFile {
   name: string;
@@ -11,6 +37,30 @@ export interface SelectedFile {
 }
 
 export const fileService = {
+  /**
+   * Opens the native document picker (Android/iOS) and returns the chosen file,
+   * or null if the user cancelled. The file is copied to the app cache so it can be uploaded.
+   */
+  async pickNativeFile(): Promise<SelectedFile | null> {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: '*/*',
+      multiple: false,
+      copyToCacheDirectory: true,
+    });
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return null;
+    }
+
+    const asset = result.assets[0];
+    return {
+      name: asset.name,
+      size: asset.size,
+      type: asset.mimeType || 'application/octet-stream',
+      uri: asset.uri,
+    };
+  },
+
   /**
    * Retrieves files in a given folder (or root if folderId is null).
    */
@@ -63,12 +113,52 @@ export const fileService = {
   },
 
   /**
-   * Downloads a file and saves it or prompts download in the browser.
+   * Web: downloads the file and triggers the browser's save dialog.
+   * Native: downloads the file into the app cache (with progress) and returns its location,
+   * so the caller can let the user save or share it.
    */
-  async downloadFile(id: string, fileName: string): Promise<void> {
+  async downloadFile(
+    id: string,
+    fileName: string,
+    onProgress?: (progress: UploadProgress) => void
+  ): Promise<NativeDownloadResult | null> {
     const token = await getAuthToken();
     const baseUrl = getApiBaseUrl();
     const url = `${baseUrl}/api/files/${encodeURIComponent(id)}/download`;
+
+    if (Platform.OS !== 'web') {
+      const downloadDir = new Directory(Paths.cache, 'downloads');
+      if (!downloadDir.exists) {
+        downloadDir.create({ intermediates: true, idempotent: true });
+      }
+      // Prefix with the file id so two files with the same name never overwrite each other
+      const destination = new File(downloadDir, `${id}_${toSafeLocalName(fileName)}`);
+
+      let downloaded: File;
+      try {
+        downloaded = await File.downloadFileAsync(url, destination, {
+          headers: { Authorization: `Bearer ${token}` },
+          idempotent: true,
+          onProgress: ({ bytesWritten, totalBytes }) => {
+            if (!onProgress) return;
+            const total = totalBytes > 0 ? totalBytes : 0;
+            onProgress({
+              loaded: bytesWritten,
+              total,
+              percent: total ? Math.min(100, Math.round((bytesWritten / total) * 100)) : 0,
+            });
+          },
+        });
+      } catch (err) {
+        throw new Error(describeDownloadError(err));
+      }
+
+      return {
+        uri: downloaded.uri,
+        name: fileName,
+        mimeType: downloaded.type || 'application/octet-stream',
+      };
+    }
 
     const response = await fetch(url, {
       method: 'GET',
@@ -87,20 +177,48 @@ export const fileService = {
     }
 
     const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.URL.revokeObjectURL(blobUrl);
+    return null;
+  },
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const blobUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = blobUrl;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      window.URL.revokeObjectURL(blobUrl);
-    } else {
-      // In mobile environments without expo-file-system, createObjectURL is simulated or alert user
-      console.log(`File ${fileName} downloaded successfully (${blob.size} bytes).`);
+  /**
+   * Android only: asks the user to pick a folder on the device (e.g. Downloads)
+   * and writes the downloaded file there. Returns false if the user cancelled.
+   */
+  async saveToDeviceFolder(download: NativeDownloadResult): Promise<boolean> {
+    let targetDir: Directory;
+    try {
+      targetDir = await Directory.pickDirectoryAsync();
+    } catch {
+      return false; // user dismissed the folder picker
     }
+    if (!targetDir) return false;
+
+    const source = new File(download.uri);
+    const target = targetDir.createFile(toSafeLocalName(download.name), download.mimeType);
+    target.write(await source.bytes());
+    return true;
+  },
+
+  /**
+   * Opens the system share sheet for a downloaded file.
+   * On iOS this includes "Save to Files"; on Android it lets the user open or send the file.
+   */
+  async shareDownloadedFile(download: NativeDownloadResult): Promise<void> {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error('Sharing is not available on this device.');
+    }
+    await Sharing.shareAsync(download.uri, {
+      mimeType: download.mimeType,
+      dialogTitle: download.name,
+    });
   },
 
   /**

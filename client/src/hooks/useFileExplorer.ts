@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Alert, Platform } from 'react-native';
 import { folderService } from '@/services/folder.service';
-import { fileService, SelectedFile } from '@/services/file.service';
+import { fileService, SelectedFile, NativeDownloadResult } from '@/services/file.service';
 import {
   FileItem,
   FolderItem,
@@ -26,6 +27,11 @@ export function useFileExplorer() {
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Download state (one download at a time) and a transient status message for actions
+  const [downloadingFile, setDownloadingFile] = useState<FileItem | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<UploadProgress | null>(null);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -187,7 +193,61 @@ export function useFileExplorer() {
    * Triggers download of a file.
    */
   const handleDownloadFile = async (file: FileItem): Promise<void> => {
-    await fileService.downloadFile(file.id, file.name);
+    if (downloadingFile) {
+      setNotice({ type: 'error', message: `Please wait until "${downloadingFile.name}" finishes downloading.` });
+      return;
+    }
+
+    setNotice(null);
+    setDownloadingFile(file);
+    setDownloadProgress({ loaded: 0, total: Number(file.size) || 0, percent: 0 });
+
+    let result: NativeDownloadResult | null = null;
+    try {
+      result = await fileService.downloadFile(file.id, file.name, setDownloadProgress);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err?.message || 'Download failed.' });
+      return;
+    } finally {
+      setDownloadingFile(null);
+      setDownloadProgress(null);
+    }
+
+    // Web: the browser already handled saving the file
+    if (!result || Platform.OS === 'web') return;
+
+    // Native: let the user choose where the file goes
+    const downloaded = result;
+    const runAction = async (action: () => Promise<boolean | void>, successMessage: string) => {
+      try {
+        const done = await action();
+        if (done !== false) setNotice({ type: 'success', message: successMessage });
+      } catch (err: any) {
+        setNotice({ type: 'error', message: err?.message || 'Could not save the file.' });
+      }
+    };
+
+    const buttons: { text: string; style?: 'cancel'; onPress?: () => void }[] = [];
+    if (Platform.OS === 'android') {
+      buttons.push({
+        text: 'Save to device',
+        onPress: () =>
+          runAction(() => fileService.saveToDeviceFolder(downloaded), `"${file.name}" saved to your device.`),
+      });
+    }
+    buttons.push({
+      text: Platform.OS === 'ios' ? 'Save / Share' : 'Open / Share',
+      onPress: () => runAction(() => fileService.shareDownloadedFile(downloaded), `"${file.name}" is ready.`),
+    });
+    buttons.push({ text: 'Close', style: 'cancel' });
+
+    Alert.alert(
+      'Download complete',
+      Platform.OS === 'ios'
+        ? `"${file.name}" was downloaded. Choose "Save / Share", then "Save to Files" to keep it.`
+        : `"${file.name}" was downloaded. Save it to a folder on your device or open it in another app.`,
+      buttons
+    );
   };
 
   /**
@@ -248,6 +308,10 @@ export function useFileExplorer() {
     refreshing,
     uploading,
     uploadProgress,
+    downloadingFile,
+    downloadProgress,
+    notice,
+    dismissNotice: () => setNotice(null),
     error,
     searchQuery,
     setSearchQuery,

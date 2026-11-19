@@ -120,6 +120,52 @@ export default function FileExplorerScreen() {
             </View>
           )}
 
+          {/* Download Progress */}
+          {explorer.downloadingFile && (
+            <View style={styles.downloadBanner}>
+              <View style={styles.downloadHeader}>
+                <ThemedText type="smallBold" numberOfLines={1} style={styles.downloadTitle}>
+                  Downloading "{explorer.downloadingFile.name}"
+                </ThemedText>
+                <ThemedText type="smallBold" style={{ color: '#2563eb' }}>
+                  {explorer.downloadProgress?.total ? `${explorer.downloadProgress.percent}%` : '...'}
+                </ThemedText>
+              </View>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${explorer.downloadProgress?.total ? explorer.downloadProgress.percent : 15}%` },
+                  ]}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Action result message (download saved / failed) */}
+          {explorer.notice && (
+            <View
+              style={[
+                styles.noticeBanner,
+                explorer.notice.type === 'success' ? styles.noticeSuccess : styles.noticeError,
+              ]}
+            >
+              <ThemedText
+                style={[
+                  styles.noticeText,
+                  { color: explorer.notice.type === 'success' ? '#166534' : '#991b1b' },
+                ]}
+              >
+                {explorer.notice.message}
+              </ThemedText>
+              <Pressable onPress={explorer.dismissNotice} hitSlop={8} accessibilityLabel="Dismiss message">
+                <ThemedText type="smallBold" style={{ color: '#475569' }}>
+                  ✕
+                </ThemedText>
+              </Pressable>
+            </View>
+          )}
+
           {/* Loading State */}
           {explorer.loading && !explorer.refreshing ? (
             <View style={styles.loadingContainer}>
@@ -270,6 +316,58 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderRadius: 6,
     marginLeft: 8,
+  },
+  downloadBanner: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 8,
+  },
+  downloadHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  downloadTitle: {
+    color: '#1e3a8a',
+    flex: 1,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#dbeafe',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#2563eb',
+    borderRadius: 3,
+  },
+  noticeBanner: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  noticeSuccess: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  noticeError: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  noticeText: {
+    flex: 1,
+    fontSize: 13,
   },
   loadingContainer: {
     paddingVertical: 60,

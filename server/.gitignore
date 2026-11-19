@@ -145,3 +145,7 @@ dist
 
 # Uploaded files
 uploads/
+
+# Database backups (contain real user data)
+backups/
+*.sql

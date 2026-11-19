@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -11,18 +11,9 @@ import { useAuth } from "@/context/AuthContext";
 import { ExternalLink } from "@/components/external-link";
 
 export default function HomeScreen() {
-  const { user, logout, getIdToken } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
-  const [token, setToken] = useState<string>("");
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
-
-  useEffect(() => {
-    async function fetchToken() {
-      const t = await getIdToken();
-      if (t) setToken(t);
-    }
-    fetchToken();
-  }, [user]);
 
   async function handleLogout() {
     try {
@@ -77,16 +68,6 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
-      {!!token && (
-        <View style={styles.tokenContainer}>
-          <Text style={styles.tokenTitle}>
-            Firebase ID Token — Copy for Postman
-          </Text>
-          <Text selectable style={styles.token}>
-            {token}
-          </Text>
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -176,25 +157,5 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
     fontSize: 16,
-  },
-  tokenContainer: {
-    marginTop: 10,
-    width: "100%",
-    maxWidth: 600,
-  },
-  tokenTitle: {
-    fontWeight: "600",
-    marginBottom: 8,
-    color: "#334155",
-  },
-  token: {
-    fontSize: 11,
-    padding: 12,
-    backgroundColor: "#f1f5f9",
-    color: "#0f172a",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    fontFamily: "monospace",
   },
 });

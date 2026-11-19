@@ -29,8 +29,10 @@ class LocalStorageService {
         const normalized = path.normalize(storagePath).replace(/^(\.\.(\/|\\|$))+/, "");
         const resolved = path.resolve(this.baseDir, normalized);
 
-        // Path traversal check
-        if (!resolved.startsWith(this.baseDir)) {
+        // Path traversal check: resolved path must be strictly inside baseDir
+        // (a plain startsWith would accept sibling dirs like "uploads_evil")
+        const relative = path.relative(this.baseDir, resolved);
+        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
             throw new AppError("Invalid storage path: Path traversal detected", 400);
         }
 

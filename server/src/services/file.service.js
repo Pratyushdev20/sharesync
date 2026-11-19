@@ -12,7 +12,7 @@ import {
  * Ensures a PostgreSQL user record exists for the given Firebase UID
  * to preserve the owner_id foreign key constraint.
  */
-export async function getOrCreatePostgresUserId(ownerUid, email = null, name = null) {
+export async function getOrCreatePostgresUserId(ownerUid, email = null, name = null, emailVerified = false) {
     if (!ownerUid) {
         throw new AppError("Unauthorized: Firebase UID is required", 401);
     }
@@ -26,8 +26,9 @@ export async function getOrCreatePostgresUserId(ownerUid, email = null, name = n
         return userRes.rows[0].id;
     }
 
-    // Check if user exists by email and link them
-    if (email) {
+    // Link an existing record by email ONLY when Firebase has verified the email.
+    // Otherwise anyone could sign up with someone else's address and claim their record.
+    if (email && emailVerified) {
         const linkRes = await pool.query(
             "UPDATE users SET firebase_uid = $1 WHERE email = $2 AND firebase_uid IS NULL RETURNING id",
             [ownerUid, email]
@@ -37,10 +38,11 @@ export async function getOrCreatePostgresUserId(ownerUid, email = null, name = n
         }
     }
 
-    // Create user record to satisfy NOT NULL foreign key
+    // Create user record to satisfy NOT NULL foreign key.
+    // Unverified emails are not stored, so they cannot collide with (or squat) a real user's email.
     const insertRes = await pool.query(
         "INSERT INTO users (name, email, firebase_uid) VALUES ($1, $2, $3) RETURNING id",
-        [name || "ShareSync User", email || `${ownerUid}@sharesync.local`, ownerUid]
+        [name || "ShareSync User", (emailVerified && email) || `${ownerUid}@sharesync.local`, ownerUid]
     );
 
     return insertRes.rows[0].id;
@@ -107,7 +109,7 @@ export async function uploadFile(ownerUid, userMeta, fileData, { folder_id = nul
     }
 
     // Get or create PostgreSQL owner_id
-    const ownerId = await getOrCreatePostgresUserId(ownerUid, userMeta?.email, userMeta?.name);
+    const ownerId = await getOrCreatePostgresUserId(ownerUid, userMeta?.email, userMeta?.name, userMeta?.emailVerified === true);
 
     // Write file to storage
     const { storagePath } = await storageService.saveFile({

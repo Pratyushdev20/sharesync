@@ -13,7 +13,6 @@ import { useAuth } from "@/context/AuthContext";
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,7 +32,6 @@ export default function LoginScreen() {
     try {
       const userCredential = await login(email, password);
       const idToken = await userCredential.user.getIdToken();
-      setToken(idToken);
 
       // Authenticate with backend using verified Firebase ID token
       try {
@@ -96,16 +94,6 @@ export default function LoginScreen() {
 
       {!!message && <Text style={styles.message}>{message}</Text>}
 
-      {!!token && (
-        <View style={styles.tokenContainer}>
-          <Text style={styles.tokenTitle}>
-            Firebase ID Token — Copy for Postman
-          </Text>
-          <Text selectable style={styles.token}>
-            {token}
-          </Text>
-        </View>
-      )}
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>Don't have an account? </Text>
@@ -161,21 +149,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     textAlign: "center",
     maxWidth: 400,
-  },
-  tokenContainer: {
-    marginTop: 20,
-    width: "100%",
-    maxWidth: 600,
-  },
-  tokenTitle: {
-    fontWeight: "bold",
-    marginBottom: 8,
-  },
-  token: {
-    fontSize: 12,
-    padding: 12,
-    backgroundColor: "#eee",
-    color: "#111",
   },
   footer: {
     flexDirection: "row",

@@ -7,6 +7,7 @@ import {
     deleteUser,
     getUserByFirebaseUid
 } from "../services/user.service.js";
+import { getVerifiedEmail } from "../utils/authHelpers.js";
 
 /**
  * GET /users
@@ -32,22 +33,28 @@ export async function getUsersController(req, res, next) {
 export async function createUserController(req, res, next) {
     try {
         const authUid = req.user.uid;
-        const { name, email, firebase_uid } = req.body;
+        const { name, email, firebase_uid } = req.body || {};
 
         // Ensure user cannot set another user's firebase_uid
         if (firebase_uid && firebase_uid !== authUid) {
             throw new AppError("Forbidden: You cannot create a record for another user", 403);
         }
 
-        // Check if user already exists
-        const existingUser = await getUserByFirebaseUid(authUid, email);
+        // Email is taken ONLY from the verified Firebase token, never from the request body
+        const tokenEmail = req.user.email || null;
+        if (email && (!tokenEmail || String(email).trim().toLowerCase() !== tokenEmail.toLowerCase())) {
+            throw new AppError("Forbidden: Email must match your authenticated account", 403);
+        }
+
+        // Check if user already exists (email-based linking only for verified emails)
+        const existingUser = await getUserByFirebaseUid(authUid, getVerifiedEmail(req.user));
         if (existingUser) {
             throw new AppError("User record already exists for this account", 409);
         }
 
         const newUser = await createUser({
             name,
-            email: email || req.user.email || null,
+            email: tokenEmail,
             firebase_uid: authUid
         });
 
@@ -96,7 +103,13 @@ export async function updateUserController(req, res, next) {
     try {
         const authUid = req.user.uid;
         const userId = req.params.id;
-        const userdata = req.body;
+        const userdata = req.body || {};
+
+        // Email is managed by Firebase Authentication and cannot be changed through this API.
+        // Allowing it would let a user claim another person's email and receive their shares.
+        if (userdata.email !== undefined) {
+            throw new AppError("Email cannot be changed through this endpoint", 400);
+        }
 
         const user = await getUserById(userId);
         if (!user) {
@@ -108,7 +121,7 @@ export async function updateUserController(req, res, next) {
             throw new AppError("Forbidden: You can only update your own record", 403);
         }
 
-        const updatedUser = await updateUser(user.id, userdata);
+        const updatedUser = await updateUser(user.id, { name: userdata.name });
         res.status(200).json({
             success: true,
             data: updatedUser

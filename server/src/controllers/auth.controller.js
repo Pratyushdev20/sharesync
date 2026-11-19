@@ -4,6 +4,7 @@ import {
     getUserByEmail,
     createUser
 } from "../services/user.service.js";
+import { getVerifiedEmail } from "../utils/authHelpers.js";
 
 /**
  * Handle user registration via verified Firebase ID token.
@@ -83,7 +84,8 @@ export async function loginController(req, res, next) {
 
         // Extract verified UID strictly from the verified Firebase token
         const verifiedUid = req.user.uid;
-        const verifiedEmail = req.user.email || null;
+        // Only link legacy records by email when Firebase has verified that email
+        const verifiedEmail = getVerifiedEmail(req.user);
 
         // Fetch corresponding user from PostgreSQL using verified UID
         const user = await getUserByFirebaseUid(verifiedUid, verifiedEmail);

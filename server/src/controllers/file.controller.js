@@ -18,6 +18,7 @@ export async function uploadFileController(req, res, next) {
         const authUid = req.user.uid;
         const userMeta = {
             email: req.user.email || null,
+            emailVerified: req.user.email_verified === true,
             name: req.user.name || null
         };
 

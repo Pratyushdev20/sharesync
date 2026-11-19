@@ -11,32 +11,38 @@ import fileRouter from "./routes/file.routes.js";
 
 
 import "./config/firebase.js";
+import env from "./config/env.js";
+import { securityHeaders, cors, apiLimiter, authLimiter } from "./middleware/security.js";
 
 const app = express();
+const isProduction = env.nodeEnv === "production";
 
-// Enable CORS for client apps
-app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
-    next();
-});
+// Don't advertise the framework; trust the first proxy so rate limiting sees real client IPs
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
 
-app.use(express.json());
+app.use(securityHeaders);
+app.use(cors);
+app.use(express.json({ limit: "100kb" }));
 app.use(logger);
 
 app.get("/", (req, res) => {
     res.send("sharesync is working");
 });
 
-app.get("/error", (req, res, next) => {
-    const error = new Error("test error");
-    next(error);
-}); 
-
 app.use("/api/health", healthRouter);
-app.use("/api/test", testRouter);
+
+// Debug-only endpoints: never exposed in production
+if (!isProduction) {
+    app.get("/error", (req, res, next) => {
+        next(new Error("test error"));
+    });
+    app.use("/api/test", testRouter);
+}
+
+app.use(apiLimiter);
+app.use(["/api/auth/login", "/api/auth/register", "/auth/login", "/auth/register"], authLimiter);
+
 app.use("/api/auth", authRouter);
 app.use("/auth", authRouter);
 app.use("/api/users", userRouter);
@@ -45,9 +51,6 @@ app.use("/api/folders", folderRouter);
 app.use("/folders", folderRouter);
 app.use("/api/files", fileRouter);
 app.use("/files", fileRouter);
-
-    
-
 
 app.use(errorHandler);
 

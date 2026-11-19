@@ -1,11 +1,8 @@
-import express from "express";
+import { Router } from "express";
 import { testApi } from "../controllers/test.controller.js";
-import Router from "express";
 
 const router = Router();
 
-router.post("/users",testApi);
+router.post("/users", testApi);
 
-export default router ;
-
-
+export default router;

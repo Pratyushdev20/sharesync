@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Alert, Platform } from 'react-native';
 import { folderService } from '@/services/folder.service';
 import { fileService, SelectedFile, NativeDownloadResult } from '@/services/file.service';
+import { shareService } from '@/services/share.service';
+import type { ShareTarget } from '@/components/explorer/modals/ShareModal';
 import {
   FileItem,
   FolderItem,
@@ -10,17 +12,33 @@ import {
   SortField,
   SortDirection,
   UploadProgress,
+  AccessLevel,
 } from '@/types/explorer';
 
-export function useFileExplorer() {
+/** 'mine' = your own workspace; 'shared' = items other people shared with you. */
+export type ExplorerMode = 'mine' | 'shared';
+
+/** Who shared an item and with which permission (only for top-level items in 'shared' mode). */
+export interface SharedItemInfo {
+  permission: AccessLevel;
+  ownerName: string;
+}
+
+export function useFileExplorer(mode: ExplorerMode = 'mine') {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([
-    { id: null, name: 'Home' },
+    { id: null, name: mode === 'shared' ? 'Shared with me' : 'Home' },
   ]);
 
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [allFolders, setAllFolders] = useState<FolderItem[]>([]);
+
+  // Access level in the folder currently open (owner in your own workspace)
+  const [currentAccess, setCurrentAccess] = useState<AccessLevel>(mode === 'shared' ? 'viewer' : 'owner');
+  // Sharing details for the top level of 'shared' mode, keyed "folder:<id>" / "file:<id>"
+  const [sharedInfo, setSharedInfo] = useState<Record<string, SharedItemInfo>>({});
+  const [itemToShare, setItemToShare] = useState<ShareTarget | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -57,20 +75,59 @@ export function useFileExplorer() {
     setError(null);
 
     try {
-      const [fetchedFolders, fetchedFiles] = await Promise.all([
-        folderService.getFolders(currentFolderId),
-        fileService.getFiles(currentFolderId),
-      ]);
-      setFolders(fetchedFolders);
-      setFiles(fetchedFiles);
+      if (mode === 'shared' && currentFolderId === null) {
+        // Top level of "Shared with me": everything shared directly with this user
+        const shared = await shareService.getSharedWithMe();
+        const info: Record<string, SharedItemInfo> = {};
+        setFolders(
+          shared.folders.map((f) => {
+            info[`folder:${f.folder_id}`] = { permission: f.permission, ownerName: f.owner_name };
+            return { id: String(f.folder_id), name: f.name, created_at: f.created_at, updated_at: f.updated_at, access: f.permission };
+          })
+        );
+        setFiles(
+          shared.files.map((f) => {
+            info[`file:${f.file_id}`] = { permission: f.permission, ownerName: f.owner_name };
+            return {
+              id: String(f.file_id),
+              name: f.name,
+              size: f.size,
+              mime_type: f.mime_type,
+              created_at: f.created_at,
+              updated_at: f.updated_at,
+              access: f.permission,
+            };
+          })
+        );
+        setSharedInfo(info);
+        setCurrentAccess('viewer');
+      } else if (mode === 'shared' && currentFolderId !== null) {
+        // Inside a shared folder: one call returns contents + our access level
+        const folder = await folderService.getFolderById(currentFolderId);
+        setFolders(folder.subfolders || []);
+        setFiles(folder.files || []);
+        setCurrentAccess(folder.access || 'viewer');
+      } else {
+        const [fetchedFolders, fetchedFiles] = await Promise.all([
+          folderService.getFolders(currentFolderId),
+          fileService.getFiles(currentFolderId),
+        ]);
+        setFolders(fetchedFolders);
+        setFiles(fetchedFiles);
+        setCurrentAccess('owner');
+      }
     } catch (err: any) {
       console.error('Error loading directory contents:', err);
-      setError(err.message || 'Failed to load files and folders.');
+      if (mode === 'shared' && (err?.status === 403 || err?.status === 404)) {
+        setError('This item is no longer shared with you.');
+      } else {
+        setError(err.message || 'Failed to load files and folders.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [currentFolderId]);
+  }, [currentFolderId, mode]);
 
   useEffect(() => {
     loadDirectory();
@@ -297,6 +354,11 @@ export function useFileExplorer() {
   }, [files, searchQuery, sortField, sortDirection]);
 
   return {
+    mode,
+    currentAccess,
+    sharedInfo,
+    itemToShare,
+    setItemToShare,
     currentFolderId,
     breadcrumbs,
     folders: filteredFolders,

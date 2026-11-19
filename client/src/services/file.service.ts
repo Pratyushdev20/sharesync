@@ -22,7 +22,8 @@ function toSafeLocalName(name: string): string {
 function describeDownloadError(err: any): string {
   const msg = String(err?.message || err || '');
   if (/\b401\b/.test(msg)) return 'Your session has expired. Please sign in again.';
-  if (/\b403\b/.test(msg)) return 'You do not have permission to download this file.';
+  if (/\b403\b/.test(msg)) return 'You do not have permission to download this file (or the link password is wrong).';
+  if (/\b410\b/.test(msg)) return 'This share link has expired or was revoked.';
   if (/\b404\b/.test(msg)) return 'This file no longer exists on the server.';
   if (/\b429\b/.test(msg)) return 'Too many requests. Please wait a moment and try again.';
   return msg ? `Download failed: ${msg}` : 'Download failed. Please check your connection.';
@@ -123,9 +124,22 @@ export const fileService = {
     onProgress?: (progress: UploadProgress) => void
   ): Promise<NativeDownloadResult | null> {
     const token = await getAuthToken();
-    const baseUrl = getApiBaseUrl();
-    const url = `${baseUrl}/api/files/${encodeURIComponent(id)}/download`;
+    const url = `${getApiBaseUrl()}/api/files/${encodeURIComponent(id)}/download`;
+    return fileService.downloadFromUrl(url, { Authorization: `Bearer ${token}` }, id, fileName, onProgress);
+  },
 
+  /**
+   * Shared download implementation (own files and share links).
+   * @param cacheKey unique prefix for the cached copy on native, so same-named files never collide
+   */
+  async downloadFromUrl(
+    url: string,
+    requestHeaders: Record<string, string>,
+    cacheKey: string,
+    fileName: string,
+    onProgress?: (progress: UploadProgress) => void
+  ): Promise<NativeDownloadResult | null> {
+    const id = cacheKey;
     if (Platform.OS !== 'web') {
       const downloadDir = new Directory(Paths.cache, 'downloads');
       if (!downloadDir.exists) {
@@ -137,7 +151,7 @@ export const fileService = {
       let downloaded: File;
       try {
         downloaded = await File.downloadFileAsync(url, destination, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: requestHeaders,
           idempotent: true,
           onProgress: ({ bytesWritten, totalBytes }) => {
             if (!onProgress) return;
@@ -162,9 +176,7 @@ export const fileService = {
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: requestHeaders,
     });
 
     if (!response.ok) {

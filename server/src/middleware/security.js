@@ -26,7 +26,7 @@ export function cors(req, res, next) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Vary", "Origin");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Share-Password");
         res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
         res.setHeader("Access-Control-Max-Age", "600");
     }
@@ -55,4 +55,39 @@ export const authLimiter = rateLimit({
     legacyHeaders: false,
     skip: () => isTest,
     handler: rateLimitResponse("Too many authentication attempts, please try again later"),
+});
+
+/** Per-user limit on creating shares/links (slows down spam and email enumeration). */
+export const shareCreateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skip: () => isTest,
+    keyGenerator: (req) => `share:${req.user?.uid || req.ip}`,
+    handler: rateLimitResponse("Too many sharing requests, please try again later"),
+});
+
+/** Per-IP limit on opening share links. */
+export const linkAccessLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 120,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skip: () => isTest,
+    handler: rateLimitResponse("Too many requests for shared links, please try again later"),
+});
+
+/**
+ * Counts only FAILED link requests (wrong password, unknown/expired token) per IP,
+ * which stops password guessing and token guessing.
+ */
+export const linkFailureLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    skip: () => isTest && process.env.TEST_RATE_LIMITS !== "1",
+    handler: rateLimitResponse("Too many failed attempts. Please wait 15 minutes and try again"),
 });

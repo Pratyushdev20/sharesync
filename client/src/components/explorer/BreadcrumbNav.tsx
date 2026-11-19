@@ -9,8 +9,9 @@ interface BreadcrumbNavProps {
   breadcrumbs: BreadcrumbItem[];
   onSelectBreadcrumb: (index: number) => void;
   onNavigateUp: () => void;
-  onNewFolder: () => void;
-  onUpload: () => void;
+  /** Hidden when not provided (e.g. read-only shared folders). */
+  onNewFolder?: () => void;
+  onUpload?: () => void;
 }
 
 export function BreadcrumbNav({
@@ -85,30 +86,34 @@ export function BreadcrumbNav({
 
         {/* Action Buttons: New Folder & Upload */}
         <View style={styles.actionGroup}>
-          <Pressable
-            onPress={onNewFolder}
-            style={({ pressed }) => [
-              styles.secondaryButton,
-              { borderColor: '#cbd5e1', backgroundColor: theme.backgroundElement },
-              pressed && styles.pressed,
-            ]}
-          >
-            <ThemedText type="smallBold" style={{ color: theme.text }}>
-              + Folder
-            </ThemedText>
-          </Pressable>
+          {onNewFolder && (
+            <Pressable
+              onPress={onNewFolder}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                { borderColor: '#cbd5e1', backgroundColor: theme.backgroundElement },
+                pressed && styles.pressed,
+              ]}
+            >
+              <ThemedText type="smallBold" style={{ color: theme.text }}>
+                + Folder
+              </ThemedText>
+            </Pressable>
+          )}
 
-          <Pressable
-            onPress={onUpload}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <ThemedText type="smallBold" style={{ color: '#ffffff' }}>
-              ↑ Upload
-            </ThemedText>
-          </Pressable>
+          {onUpload && (
+            <Pressable
+              onPress={onUpload}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <ThemedText type="smallBold" style={{ color: '#ffffff' }}>
+                ↑ Upload
+              </ThemedText>
+            </Pressable>
+          )}
         </View>
       </View>
     </View>

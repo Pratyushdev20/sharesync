@@ -9,8 +9,12 @@ interface FolderCardProps {
   folder: FolderItem;
   viewMode: ViewMode;
   onOpen: (folder: FolderItem) => void;
-  onRename: (folder: FolderItem) => void;
-  onDelete: (folder: FolderItem) => void;
+  /** Each optional action is only shown when provided (i.e. when the user has permission). */
+  onRename?: (folder: FolderItem) => void;
+  onDelete?: (folder: FolderItem) => void;
+  onShare?: (folder: FolderItem) => void;
+  /** Extra line under the name, e.g. "Shared by Rahul • Editor". */
+  subtitle?: string;
 }
 
 export function FolderCard({
@@ -19,6 +23,8 @@ export function FolderCard({
   onOpen,
   onRename,
   onDelete,
+  onShare,
+  subtitle,
 }: FolderCardProps) {
   const theme = useTheme();
 
@@ -41,33 +47,49 @@ export function FolderCard({
               {folder.name}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
-              Folder {folder.updated_at ? `• ${formatDate(folder.updated_at)}` : ''}
+              {subtitle || `Folder ${folder.updated_at ? `• ${formatDate(folder.updated_at)}` : ''}`}
             </ThemedText>
           </View>
         </View>
 
         <View style={styles.actionButtons}>
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation();
-              onRename(folder);
-            }}
-            style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
-            accessibilityLabel="Rename folder"
-          >
-            <ThemedText style={{ fontSize: 13 }}>✏️</ThemedText>
-          </Pressable>
+          {onShare && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onShare(folder);
+              }}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Share folder"
+            >
+              <ThemedText style={{ fontSize: 13 }}>🔗</ThemedText>
+            </Pressable>
+          )}
+          {onRename && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onRename(folder);
+              }}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Rename folder"
+            >
+              <ThemedText style={{ fontSize: 13 }}>✏️</ThemedText>
+            </Pressable>
+          )}
 
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation();
-              onDelete(folder);
-            }}
-            style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
-            accessibilityLabel="Delete folder"
-          >
-            <ThemedText style={{ fontSize: 13 }}>🗑️</ThemedText>
-          </Pressable>
+          {onDelete && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onDelete(folder);
+              }}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Delete folder"
+            >
+              <ThemedText style={{ fontSize: 13 }}>🗑️</ThemedText>
+            </Pressable>
+          )}
         </View>
       </Pressable>
     );
@@ -89,26 +111,43 @@ export function FolderCard({
         </View>
 
         <View style={styles.gridActions}>
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation();
-              onRename(folder);
-            }}
-            style={styles.gridActionButton}
-            hitSlop={6}
-          >
-            <ThemedText style={{ fontSize: 12 }}>✏️</ThemedText>
-          </Pressable>
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation();
-              onDelete(folder);
-            }}
-            style={styles.gridActionButton}
-            hitSlop={6}
-          >
-            <ThemedText style={{ fontSize: 12 }}>🗑️</ThemedText>
-          </Pressable>
+          {onShare && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onShare(folder);
+              }}
+              style={styles.gridActionButton}
+              hitSlop={6}
+              accessibilityLabel="Share folder"
+            >
+              <ThemedText style={{ fontSize: 12 }}>🔗</ThemedText>
+            </Pressable>
+          )}
+          {onRename && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onRename(folder);
+              }}
+              style={styles.gridActionButton}
+              hitSlop={6}
+            >
+              <ThemedText style={{ fontSize: 12 }}>✏️</ThemedText>
+            </Pressable>
+          )}
+          {onDelete && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onDelete(folder);
+              }}
+              style={styles.gridActionButton}
+              hitSlop={6}
+            >
+              <ThemedText style={{ fontSize: 12 }}>🗑️</ThemedText>
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -116,8 +155,8 @@ export function FolderCard({
         <ThemedText type="smallBold" numberOfLines={1} style={{ color: theme.text }}>
           {folder.name}
         </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11, marginTop: 2 }}>
-          Folder
+        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={{ fontSize: 11, marginTop: 2 }}>
+          {subtitle || 'Folder'}
         </ThemedText>
       </View>
     </Pressable>

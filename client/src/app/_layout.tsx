@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { Colors } from '@/constants/theme';
+import { takePendingRedirect } from '@/utils/pendingRedirect';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -20,18 +21,20 @@ function NavigationGuard() {
 
   const currentSegment = (segments as string[])[0];
   const inAuthGroup = currentSegment === 'login' || currentSegment === 'signup';
+  // Share links (/s/<token>) are public: the server decides whether sign-in is required
+  const isPublicLink = currentSegment === 's';
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || isPublicLink) return;
 
     if (!user && !inAuthGroup) {
       // Unauthenticated user trying to access protected screen -> redirect to login
       router.replace('/login');
     } else if (user && inAuthGroup) {
-      // Authenticated user on login/signup screen -> redirect to home
-      router.replace('/');
+      // Authenticated user on login/signup screen -> back to a pending share link, or home
+      router.replace((takePendingRedirect() || '/') as any);
     }
-  }, [user, loading, inAuthGroup]);
+  }, [user, loading, inAuthGroup, isPublicLink]);
 
   // Display loading screen while checking authentication state to prevent flashes
   if (loading) {
@@ -42,8 +45,8 @@ function NavigationGuard() {
     );
   }
 
-  // If on login screen, render without the tab bar
-  if (inAuthGroup) {
+  // Login/signup and share-link pages render without the tab bar
+  if (inAuthGroup || isPublicLink) {
     return <Slot />;
   }
 

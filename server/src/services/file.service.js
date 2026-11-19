@@ -7,6 +7,7 @@ import {
     validateFileId,
     validateFileContent
 } from "../utils/fileValidator.js";
+import { requireFileAccess, requireFolderAccess } from "./access.service.js";
 
 /**
  * Ensures a PostgreSQL user record exists for the given Firebase UID
@@ -48,11 +49,52 @@ export async function getOrCreatePostgresUserId(ownerUid, email = null, name = n
     return insertRes.rows[0].id;
 }
 
+const PUBLIC_FILE_FIELDS = "id, name, size, mime_type, folder_id, created_at, updated_at";
+
+/** Removes internal fields before a file record is sent to a client. */
+function toPublicFile(file, permission) {
+    const out = {
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        mime_type: file.mime_type,
+        folder_id: file.folder_id,
+        created_at: file.created_at,
+        updated_at: file.updated_at
+    };
+    if (permission) out.access = permission;
+    return out;
+}
+
+/** True if a request value means "the root of my workspace". */
+function isRootValue(value) {
+    return value === null || value === undefined || value === "null" || value === "root" || value === "";
+}
+
+/** Case-insensitive duplicate name check inside one owner's folder (or root). */
+async function assertNameAvailable(ownerUid, folderId, name, excludeId = null, message = "A file with this name already exists in this location") {
+    const params = [ownerUid, name];
+    let sql = folderId === null
+        ? "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id IS NULL AND LOWER(name) = LOWER($2)"
+        : "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id = $3 AND LOWER(name) = LOWER($2)";
+    if (folderId !== null) params.push(folderId);
+    if (excludeId !== null) {
+        params.push(excludeId);
+        sql += ` AND id != $${params.length}`;
+    }
+    const dup = await pool.query(sql, params);
+    if (dup.rows.length > 0) {
+        throw new AppError(message, 409);
+    }
+}
+
 /**
- * Uploads a file, validates content and permissions, and saves to storage and database.
+ * Uploads a file into the caller's root, one of their folders, or a folder shared with them as editor.
+ * Files uploaded into a shared folder belong to the folder's owner (so they stay inside the shared tree);
+ * the uploader is recorded in uploaded_by_uid.
  */
-export async function uploadFile(ownerUid, userMeta, fileData, { folder_id = null } = {}) {
-    if (!ownerUid) {
+export async function uploadFile(callerUid, userMeta, fileData, { folder_id = null } = {}) {
+    if (!callerUid) {
         throw new AppError("Unauthorized: Firebase UID is required", 401);
     }
 
@@ -71,48 +113,29 @@ export async function uploadFile(ownerUid, userMeta, fileData, { folder_id = nul
     );
 
     let validFolderId = null;
+    let ownerUid = callerUid;
 
-    // Validate target folder if provided
-    if (folder_id !== null && folder_id !== undefined && folder_id !== "null" && folder_id !== "root" && folder_id !== "") {
+    if (!isRootValue(folder_id)) {
         validFolderId = validateFileId(folder_id);
-
-        const folderRes = await pool.query(
-            "SELECT id, owner_firebase_uid FROM folders WHERE id = $1",
-            [validFolderId]
-        );
-
-        if (folderRes.rows.length === 0) {
-            throw new AppError("Target folder not found", 404);
+        let access;
+        try {
+            access = await requireFolderAccess(callerUid, validFolderId, "editor", "upload files to this folder");
+        } catch (err) {
+            if (err.statusCode === 404) throw new AppError("Target folder not found", 404);
+            throw err;
         }
-
-        if (folderRes.rows[0].owner_firebase_uid !== ownerUid) {
-            throw new AppError("Forbidden: You do not have permission to upload files to this folder", 403);
-        }
+        ownerUid = access.folder.owner_firebase_uid;
     }
 
-    // Check duplicate filename in target folder for this owner
-    let dupCheck;
-    if (validFolderId === null) {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id IS NULL AND LOWER(name) = LOWER($2)",
-            [ownerUid, validName]
-        );
-    } else {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id = $2 AND LOWER(name) = LOWER($3)",
-            [ownerUid, validFolderId, validName]
-        );
-    }
+    await assertNameAvailable(ownerUid, validFolderId, validName);
 
-    if (dupCheck.rows.length > 0) {
-        throw new AppError("A file with this name already exists in this location", 409);
-    }
+    // Get or create PostgreSQL owner_id for the file owner
+    const ownerId = ownerUid === callerUid
+        ? await getOrCreatePostgresUserId(ownerUid, userMeta?.email, userMeta?.name, userMeta?.emailVerified === true)
+        : await getOrCreatePostgresUserId(ownerUid);
 
-    // Get or create PostgreSQL owner_id
-    const ownerId = await getOrCreatePostgresUserId(ownerUid, userMeta?.email, userMeta?.name, userMeta?.emailVerified === true);
-
-    // Write file to storage
-    const { storagePath } = await storageService.saveFile({
+    // Write encrypted file to storage
+    const { storagePath, encrypted } = await storageService.saveFile({
         ownerUid,
         filename: validName,
         buffer: fileData.buffer
@@ -120,208 +143,125 @@ export async function uploadFile(ownerUid, userMeta, fileData, { folder_id = nul
 
     try {
         const result = await pool.query(
-            `INSERT INTO files (name, size, mime_type, storage_path, owner_id, folder_id, owner_firebase_uid, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-             RETURNING id, name, size, mime_type, folder_id, created_at, updated_at`,
-            [validName, size, verifiedMimeType, storagePath, ownerId, validFolderId, ownerUid]
+            `INSERT INTO files (name, size, mime_type, storage_path, owner_id, folder_id, owner_firebase_uid,
+                                uploaded_by_uid, is_encrypted, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             RETURNING ${PUBLIC_FILE_FIELDS}`,
+            [validName, size, verifiedMimeType, storagePath, ownerId, validFolderId, ownerUid, callerUid, encrypted === true]
         );
 
         return result.rows[0];
     } catch (dbErr) {
         // Rollback disk write if DB insert fails
         await storageService.deleteFile(storagePath);
+        if (dbErr.code === "23505") {
+            throw new AppError("A file with this name already exists in this location", 409);
+        }
         throw dbErr;
     }
 }
 
 /**
- * Lists files owned by the authenticated user, optionally filtered by folder.
+ * Lists files. With a folder ID, lists that folder's files if the caller can view it
+ * (owned or shared). Without one, lists the caller's own files.
  */
-export async function getFiles(ownerUid, { folder_id } = {}) {
-    if (!ownerUid) {
+export async function getFiles(callerUid, { folder_id } = {}) {
+    if (!callerUid) {
         throw new AppError("Unauthorized: Firebase UID is required", 401);
     }
 
     if (folder_id !== undefined && folder_id !== "") {
         if (folder_id === "root" || folder_id === "null" || folder_id === null) {
             const result = await pool.query(
-                `SELECT id, name, size, mime_type, folder_id, created_at, updated_at
+                `SELECT ${PUBLIC_FILE_FIELDS}
                  FROM files
                  WHERE owner_firebase_uid = $1 AND folder_id IS NULL
                  ORDER BY name ASC`,
-                [ownerUid]
+                [callerUid]
             );
             return result.rows;
         }
 
         const validFolderId = validateFileId(folder_id);
-
-        // Verify folder exists and belongs to the user
-        const folderRes = await pool.query(
-            "SELECT id, owner_firebase_uid FROM folders WHERE id = $1",
-            [validFolderId]
-        );
-
-        if (folderRes.rows.length === 0) {
-            throw new AppError("Folder not found", 404);
-        }
-
-        if (folderRes.rows[0].owner_firebase_uid !== ownerUid) {
-            throw new AppError("Forbidden: You do not have permission to access files in this folder", 403);
-        }
+        await requireFolderAccess(callerUid, validFolderId, "viewer", "access files in this folder");
 
         const result = await pool.query(
-            `SELECT id, name, size, mime_type, folder_id, created_at, updated_at
+            `SELECT ${PUBLIC_FILE_FIELDS}
              FROM files
-             WHERE owner_firebase_uid = $1 AND folder_id = $2
+             WHERE folder_id = $1
              ORDER BY name ASC`,
-            [ownerUid, validFolderId]
+            [validFolderId]
         );
         return result.rows;
     }
 
     const result = await pool.query(
-        `SELECT id, name, size, mime_type, folder_id, created_at, updated_at
+        `SELECT ${PUBLIC_FILE_FIELDS}
          FROM files
          WHERE owner_firebase_uid = $1
          ORDER BY folder_id NULLS FIRST, name ASC`,
-        [ownerUid]
+        [callerUid]
     );
     return result.rows;
 }
 
 /**
- * Gets file metadata by ID, strictly enforcing ownership.
- * Never exposes internal storage_path.
+ * Gets file metadata by ID (owner or shared user). Never exposes internal storage_path.
+ * Includes `access` so clients know which actions to offer.
  */
-export async function getFileById(fileId, ownerUid) {
-    if (!ownerUid) {
-        throw new AppError("Unauthorized: Firebase UID is required", 401);
-    }
-
+export async function getFileById(fileId, callerUid) {
     const validId = validateFileId(fileId);
-
-    const result = await pool.query(
-        `SELECT id, name, size, mime_type, folder_id, owner_firebase_uid, created_at, updated_at
-         FROM files
-         WHERE id = $1`,
-        [validId]
-    );
-
-    if (result.rows.length === 0) {
-        throw new AppError("File not found", 404);
-    }
-
-    const file = result.rows[0];
-
-    if (file.owner_firebase_uid !== ownerUid) {
-        throw new AppError("Forbidden: You do not have permission to access this file", 403);
-    }
-
-    return {
-        id: file.id,
-        name: file.name,
-        size: file.size,
-        mime_type: file.mime_type,
-        folder_id: file.folder_id,
-        created_at: file.created_at,
-        updated_at: file.updated_at
-    };
+    const { file, permission } = await requireFileAccess(callerUid, validId, "viewer", "access this file");
+    return toPublicFile(file, permission);
 }
 
 /**
- * Retrieves file record and stream for secure download.
+ * Opens a decrypted stream of a file record. Shared by user downloads and link downloads.
  */
-export async function getFileForDownload(fileId, ownerUid) {
-    if (!ownerUid) {
-        throw new AppError("Unauthorized: Firebase UID is required", 401);
-    }
-
-    const validId = validateFileId(fileId);
-
-    const result = await pool.query(
-        `SELECT id, name, size, mime_type, storage_path, owner_firebase_uid
-         FROM files
-         WHERE id = $1`,
-        [validId]
-    );
-
-    if (result.rows.length === 0) {
-        throw new AppError("File not found", 404);
-    }
-
-    const file = result.rows[0];
-
-    if (file.owner_firebase_uid !== ownerUid) {
-        throw new AppError("Forbidden: You do not have permission to download this file", 403);
-    }
-
-    const { stream, size } = await storageService.getFileStream(file.storage_path);
-
+export async function openFileStream(file) {
+    const { stream, size } = await storageService.getFileStream(file.storage_path, {
+        encrypted: file.is_encrypted === true
+    });
     return {
         fileRecord: {
             id: file.id,
             name: file.name,
             mime_type: file.mime_type,
-            size: size || file.size
+            size: size ?? file.size
         },
         stream
     };
 }
 
 /**
- * Renames a file owned by the user.
+ * Retrieves file record and stream for secure download (owner, editor or viewer).
  */
-export async function renameFile(fileId, ownerUid, newName) {
-    if (!ownerUid) {
-        throw new AppError("Unauthorized: Firebase UID is required", 401);
-    }
+export async function getFileForDownload(fileId, callerUid) {
+    const validId = validateFileId(fileId);
+    const { file } = await requireFileAccess(callerUid, validId, "viewer", "download this file");
+    return openFileStream(file);
+}
 
+/**
+ * Renames a file (owner or editor).
+ */
+export async function renameFile(fileId, callerUid, newName) {
     const validId = validateFileId(fileId);
     const validName = validateFileName(newName);
 
-    const fileRes = await pool.query(
-        "SELECT id, name, folder_id, owner_firebase_uid FROM files WHERE id = $1",
-        [validId]
-    );
-
-    if (fileRes.rows.length === 0) {
-        throw new AppError("File not found", 404);
-    }
-
-    const file = fileRes.rows[0];
-
-    if (file.owner_firebase_uid !== ownerUid) {
-        throw new AppError("Forbidden: You do not have permission to rename this file", 403);
-    }
+    const { file, permission } = await requireFileAccess(callerUid, validId, "editor", "rename this file");
 
     if (file.name === validName) {
-        return getFileById(validId, ownerUid);
+        return toPublicFile(file, permission);
     }
 
-    // Check duplicate filename in same folder
-    let dupCheck;
-    if (file.folder_id === null) {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id IS NULL AND LOWER(name) = LOWER($2) AND id != $3",
-            [ownerUid, validName, validId]
-        );
-    } else {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id = $2 AND LOWER(name) = LOWER($3) AND id != $4",
-            [ownerUid, file.folder_id, validName, validId]
-        );
-    }
-
-    if (dupCheck.rows.length > 0) {
-        throw new AppError("A file with this name already exists in this location", 409);
-    }
+    await assertNameAvailable(file.owner_firebase_uid, file.folder_id, validName, validId);
 
     const result = await pool.query(
         `UPDATE files
          SET name = $1, updated_at = CURRENT_TIMESTAMP
          WHERE id = $2
-         RETURNING id, name, size, mime_type, folder_id, created_at, updated_at`,
+         RETURNING ${PUBLIC_FILE_FIELDS}`,
         [validName, validId]
     );
 
@@ -329,33 +269,16 @@ export async function renameFile(fileId, ownerUid, newName) {
 }
 
 /**
- * Moves a file between folders (or to root).
+ * Moves a file between the owner's folders (or to root). Owner only:
+ * moving can take a file out of a shared folder, so shared users may not do it.
  */
-export async function moveFile(fileId, ownerUid, targetFolderId) {
-    if (!ownerUid) {
-        throw new AppError("Unauthorized: Firebase UID is required", 401);
-    }
-
+export async function moveFile(fileId, callerUid, targetFolderId) {
     const validId = validateFileId(fileId);
-
-    const fileRes = await pool.query(
-        "SELECT id, name, folder_id, owner_firebase_uid FROM files WHERE id = $1",
-        [validId]
-    );
-
-    if (fileRes.rows.length === 0) {
-        throw new AppError("File not found", 404);
-    }
-
-    const file = fileRes.rows[0];
-
-    if (file.owner_firebase_uid !== ownerUid) {
-        throw new AppError("Forbidden: You do not have permission to move this file", 403);
-    }
+    const { file } = await requireFileAccess(callerUid, validId, "owner", "move this file");
 
     let validTargetId = null;
 
-    if (targetFolderId !== null && targetFolderId !== undefined && targetFolderId !== "null" && targetFolderId !== "root" && targetFolderId !== "") {
+    if (!isRootValue(targetFolderId)) {
         validTargetId = validateFileId(targetFolderId);
 
         const folderRes = await pool.query(
@@ -367,34 +290,18 @@ export async function moveFile(fileId, ownerUid, targetFolderId) {
             throw new AppError("Target folder not found", 404);
         }
 
-        if (folderRes.rows[0].owner_firebase_uid !== ownerUid) {
+        if (folderRes.rows[0].owner_firebase_uid !== callerUid) {
             throw new AppError("Forbidden: You do not have permission to move files to this folder", 403);
         }
     }
 
-    // Check duplicate in target folder
-    let dupCheck;
-    if (validTargetId === null) {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id IS NULL AND LOWER(name) = LOWER($2) AND id != $3",
-            [ownerUid, file.name, validId]
-        );
-    } else {
-        dupCheck = await pool.query(
-            "SELECT id FROM files WHERE owner_firebase_uid = $1 AND folder_id = $2 AND LOWER(name) = LOWER($3) AND id != $4",
-            [ownerUid, validTargetId, file.name, validId]
-        );
-    }
-
-    if (dupCheck.rows.length > 0) {
-        throw new AppError("A file with this name already exists in the target folder", 409);
-    }
+    await assertNameAvailable(callerUid, validTargetId, file.name, validId, "A file with this name already exists in the target folder");
 
     const result = await pool.query(
         `UPDATE files
          SET folder_id = $1, updated_at = CURRENT_TIMESTAMP
          WHERE id = $2
-         RETURNING id, name, size, mime_type, folder_id, created_at, updated_at`,
+         RETURNING ${PUBLIC_FILE_FIELDS}`,
         [validTargetId, validId]
     );
 
@@ -402,37 +309,18 @@ export async function moveFile(fileId, ownerUid, targetFolderId) {
 }
 
 /**
- * Deletes a file from database and disk storage.
+ * Deletes a file from database and disk storage (owner or editor).
+ * The database row is removed first so a storage failure never leaves a row pointing at nothing.
  */
-export async function deleteFile(fileId, ownerUid) {
-    if (!ownerUid) {
-        throw new AppError("Unauthorized: Firebase UID is required", 401);
-    }
-
+export async function deleteFile(fileId, callerUid) {
     const validId = validateFileId(fileId);
+    const { file } = await requireFileAccess(callerUid, validId, "editor", "delete this file");
 
-    const fileRes = await pool.query(
-        "SELECT id, name, storage_path, owner_firebase_uid FROM files WHERE id = $1",
-        [validId]
-    );
+    await pool.query("DELETE FROM files WHERE id = $1", [validId]);
 
-    if (fileRes.rows.length === 0) {
-        throw new AppError("File not found", 404);
-    }
-
-    const file = fileRes.rows[0];
-
-    if (file.owner_firebase_uid !== ownerUid) {
-        throw new AppError("Forbidden: You do not have permission to delete this file", 403);
-    }
-
-    // Remove from storage
     if (file.storage_path) {
         await storageService.deleteFile(file.storage_path);
     }
-
-    // Remove from database
-    await pool.query("DELETE FROM files WHERE id = $1", [validId]);
 
     return {
         id: file.id,

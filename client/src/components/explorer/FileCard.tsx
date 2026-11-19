@@ -9,9 +9,13 @@ interface FileCardProps {
   file: FileItem;
   viewMode: ViewMode;
   onDownload: (file: FileItem) => void;
-  onRename: (file: FileItem) => void;
-  onMove: (file: FileItem) => void;
-  onDelete: (file: FileItem) => void;
+  /** Each optional action is only shown when provided (i.e. when the user has permission). */
+  onRename?: (file: FileItem) => void;
+  onMove?: (file: FileItem) => void;
+  onDelete?: (file: FileItem) => void;
+  onShare?: (file: FileItem) => void;
+  /** Extra line under the name, e.g. "Shared by Rahul • Viewer". */
+  subtitle?: string;
 }
 
 export function FileCard({
@@ -21,6 +25,8 @@ export function FileCard({
   onRename,
   onMove,
   onDelete,
+  onShare,
+  subtitle,
 }: FileCardProps) {
   const theme = useTheme();
   const fileTypeInfo = getFileTypeInfo(file.name, file.mime_type);
@@ -39,6 +45,11 @@ export function FileCard({
             <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
               {formatFileSize(file.size)} • {fileTypeInfo.label} {file.updated_at ? `• ${formatDate(file.updated_at)}` : ''}
             </ThemedText>
+            {!!subtitle && (
+              <ThemedText type="small" numberOfLines={1} style={{ fontSize: 11, color: '#2563eb' }}>
+                {subtitle}
+              </ThemedText>
+            )}
           </View>
         </View>
 
@@ -51,29 +62,45 @@ export function FileCard({
             <ThemedText style={{ fontSize: 13 }}>⬇️</ThemedText>
           </Pressable>
 
-          <Pressable
-            onPress={() => onRename(file)}
-            style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
-            accessibilityLabel="Rename file"
-          >
-            <ThemedText style={{ fontSize: 13 }}>✏️</ThemedText>
-          </Pressable>
+          {onShare && (
+            <Pressable
+              onPress={() => onShare(file)}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Share file"
+            >
+              <ThemedText style={{ fontSize: 13 }}>🔗</ThemedText>
+            </Pressable>
+          )}
 
-          <Pressable
-            onPress={() => onMove(file)}
-            style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
-            accessibilityLabel="Move file"
-          >
-            <ThemedText style={{ fontSize: 13 }}>↪️</ThemedText>
-          </Pressable>
+          {onRename && (
+            <Pressable
+              onPress={() => onRename(file)}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Rename file"
+            >
+              <ThemedText style={{ fontSize: 13 }}>✏️</ThemedText>
+            </Pressable>
+          )}
 
-          <Pressable
-            onPress={() => onDelete(file)}
-            style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
-            accessibilityLabel="Delete file"
-          >
-            <ThemedText style={{ fontSize: 13 }}>🗑️</ThemedText>
-          </Pressable>
+          {onMove && (
+            <Pressable
+              onPress={() => onMove(file)}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Move file"
+            >
+              <ThemedText style={{ fontSize: 13 }}>↪️</ThemedText>
+            </Pressable>
+          )}
+
+          {onDelete && (
+            <Pressable
+              onPress={() => onDelete(file)}
+              style={({ pressed }) => [styles.miniActionButton, pressed && styles.pressed]}
+              accessibilityLabel="Delete file"
+            >
+              <ThemedText style={{ fontSize: 13 }}>🗑️</ThemedText>
+            </Pressable>
+          )}
         </View>
       </View>
     );
@@ -91,15 +118,26 @@ export function FileCard({
           <Pressable onPress={() => onDownload(file)} style={styles.gridActionButton} hitSlop={6}>
             <ThemedText style={{ fontSize: 12 }}>⬇️</ThemedText>
           </Pressable>
-          <Pressable onPress={() => onRename(file)} style={styles.gridActionButton} hitSlop={6}>
-            <ThemedText style={{ fontSize: 12 }}>✏️</ThemedText>
-          </Pressable>
-          <Pressable onPress={() => onMove(file)} style={styles.gridActionButton} hitSlop={6}>
-            <ThemedText style={{ fontSize: 12 }}>↪️</ThemedText>
-          </Pressable>
-          <Pressable onPress={() => onDelete(file)} style={styles.gridActionButton} hitSlop={6}>
-            <ThemedText style={{ fontSize: 12 }}>🗑️</ThemedText>
-          </Pressable>
+          {onShare && (
+            <Pressable onPress={() => onShare(file)} style={styles.gridActionButton} hitSlop={6} accessibilityLabel="Share file">
+              <ThemedText style={{ fontSize: 12 }}>🔗</ThemedText>
+            </Pressable>
+          )}
+          {onRename && (
+            <Pressable onPress={() => onRename(file)} style={styles.gridActionButton} hitSlop={6}>
+              <ThemedText style={{ fontSize: 12 }}>✏️</ThemedText>
+            </Pressable>
+          )}
+          {onMove && (
+            <Pressable onPress={() => onMove(file)} style={styles.gridActionButton} hitSlop={6}>
+              <ThemedText style={{ fontSize: 12 }}>↪️</ThemedText>
+            </Pressable>
+          )}
+          {onDelete && (
+            <Pressable onPress={() => onDelete(file)} style={styles.gridActionButton} hitSlop={6}>
+              <ThemedText style={{ fontSize: 12 }}>🗑️</ThemedText>
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -107,6 +145,11 @@ export function FileCard({
         <ThemedText type="smallBold" numberOfLines={1} style={{ color: theme.text }}>
           {file.name}
         </ThemedText>
+        {!!subtitle && (
+          <ThemedText type="small" numberOfLines={1} style={{ fontSize: 11, color: '#2563eb', marginTop: 2 }}>
+            {subtitle}
+          </ThemedText>
+        )}
         <View style={styles.metaRow}>
           <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
             {formatFileSize(file.size)}

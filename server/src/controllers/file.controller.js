@@ -8,6 +8,7 @@ import {
     deleteFile
 } from "../services/file.service.js";
 import AppError from "../utils/AppError.js";
+import { sendFileStream } from "../utils/sendFile.js";
 
 /**
  * POST /api/files/upload
@@ -93,25 +94,8 @@ export async function downloadFileController(req, res, next) {
         const authUid = req.user.uid;
         const { id } = req.params;
 
-        const { fileRecord, stream } = await getFileForDownload(id, authUid);
-
-        // Sanitize ASCII filename for Content-Disposition header
-        const safeAsciiName = fileRecord.name.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, '\\"');
-        const encodedName = encodeURIComponent(fileRecord.name);
-
-        res.setHeader("Content-Disposition", `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`);
-        res.setHeader("Content-Type", fileRecord.mime_type || "application/octet-stream");
-        if (fileRecord.size) {
-            res.setHeader("Content-Length", fileRecord.size);
-        }
-
-        stream.on("error", (err) => {
-            if (!res.headersSent) {
-                next(new AppError("Failed to stream file", 500));
-            }
-        });
-
-        stream.pipe(res);
+        const download = await getFileForDownload(id, authUid);
+        sendFileStream(res, next, download);
     } catch (error) {
         next(error);
     }

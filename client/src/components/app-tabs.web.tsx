@@ -27,6 +27,9 @@ export default function AppTabs() {
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Files</TabButton>
           </TabTrigger>
+          <TabTrigger name="shared" href="/shared" asChild>
+            <TabButton>Shared</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

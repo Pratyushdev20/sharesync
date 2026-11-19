@@ -1,3 +1,5 @@
+import AppError from "../utils/AppError.js";
+
 const errorHandler = (err, req, res, next) => {
     const statuscode = err.statuscode || err.statusCode || 500;
     const isOperational = err.isOperational === true;
@@ -11,10 +13,12 @@ const errorHandler = (err, req, res, next) => {
         ? err.message || "Request failed"
         : "Internal server error";
 
-    res.status(statuscode).json({
-        success: false,
-        message
-    });
+    const body = { success: false, message };
+    // Only expose our own machine-readable codes (never raw DB/system error codes)
+    if (err instanceof AppError && typeof err.code === "string") {
+        body.code = err.code;
+    }
+    res.status(statuscode).json(body);
 };
 
 export default errorHandler ;

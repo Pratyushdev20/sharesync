@@ -30,3 +30,29 @@ export async function authMiddleware(req, res, next) {
     req.user = decodedToken;
     return next();
 }
+
+/**
+ * Optional authentication for public share-link endpoints.
+ * No Authorization header -> anonymous (req.user = null).
+ * A header that is present but invalid is still rejected, so a broken/expired session is
+ * never silently downgraded to anonymous access.
+ */
+export async function optionalAuthMiddleware(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        req.user = null;
+        return next();
+    }
+
+    const parts = authHeader.split(" ");
+    if (parts.length !== 2 || parts[0] !== "Bearer" || !parts[1]) {
+        return next(new AppError("Invalid authorization format", 401));
+    }
+
+    try {
+        req.user = await getAuth().verifyIdToken(parts[1]);
+    } catch (error) {
+        return next(new AppError("Invalid or expired token", 401));
+    }
+    return next();
+}

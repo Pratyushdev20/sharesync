@@ -7,6 +7,8 @@ import userRouter from "./routes/user.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import folderRouter from "./routes/folder.routes.js";
 import fileRouter from "./routes/file.routes.js";
+import shareRouter from "./routes/share.routes.js";
+import publicLinkRouter from "./routes/publicLink.routes.js";
 
 
 
@@ -51,6 +53,8 @@ app.use("/api/folders", folderRouter);
 app.use("/folders", folderRouter);
 app.use("/api/files", fileRouter);
 app.use("/files", fileRouter);
+app.use("/api/shares", shareRouter);
+app.use("/api/public/links", publicLinkRouter);
 
 app.use(errorHandler);
 

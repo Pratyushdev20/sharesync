@@ -5,9 +5,12 @@ import { useTheme } from '@/hooks/use-theme';
 
 interface EmptyStateProps {
   isSearch: boolean;
-  onNewFolder: () => void;
-  onUpload: () => void;
+  /** Hidden when not provided (e.g. read-only shared folders). */
+  onNewFolder?: () => void;
+  onUpload?: () => void;
   onClearSearch: () => void;
+  title?: string;
+  message?: string;
 }
 
 export function EmptyState({
@@ -15,6 +18,8 @@ export function EmptyState({
   onNewFolder,
   onUpload,
   onClearSearch,
+  title,
+  message,
 }: EmptyStateProps) {
   const theme = useTheme();
 
@@ -46,34 +51,38 @@ export function EmptyState({
         <ThemedText style={{ fontSize: 36 }}>📂</ThemedText>
       </View>
       <ThemedText type="subtitle" style={[styles.title, { color: theme.text }]}>
-        This folder is empty
+        {title || 'This folder is empty'}
       </ThemedText>
       <ThemedText type="small" themeColor="textSecondary" style={styles.subtitle}>
-        Upload documents, images, and files or create subfolders to organize your files.
+        {message || 'Upload documents, images, and files or create subfolders to organize your files.'}
       </ThemedText>
 
       <View style={styles.buttonRow}>
-        <Pressable
-          onPress={onUpload}
-          style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
-        >
-          <ThemedText type="smallBold" style={{ color: '#ffffff' }}>
-            ↑ Upload File
-          </ThemedText>
-        </Pressable>
+        {onUpload && (
+          <Pressable
+            onPress={onUpload}
+            style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
+          >
+            <ThemedText type="smallBold" style={{ color: '#ffffff' }}>
+              ↑ Upload File
+            </ThemedText>
+          </Pressable>
+        )}
 
-        <Pressable
-          onPress={onNewFolder}
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            { borderColor: '#cbd5e1', backgroundColor: theme.backgroundElement },
-            pressed && styles.pressed,
-          ]}
-        >
-          <ThemedText type="smallBold" style={{ color: theme.text }}>
-            + New Folder
-          </ThemedText>
-        </Pressable>
+        {onNewFolder && (
+          <Pressable
+            onPress={onNewFolder}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              { borderColor: '#cbd5e1', backgroundColor: theme.backgroundElement },
+              pressed && styles.pressed,
+            ]}
+          >
+            <ThemedText type="smallBold" style={{ color: theme.text }}>
+              + New Folder
+            </ThemedText>
+          </Pressable>
+        )}
       </View>
     </View>
   );

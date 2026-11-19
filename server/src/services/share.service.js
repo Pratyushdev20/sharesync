@@ -1,6 +1,10 @@
 import crypto from "crypto";
 import pool from "../config/db.js";
 import AppError from "../utils/AppError.js";
+import { hashPassword, verifyPassword, hashToken } from "../utils/crypto.js";
+
+const LINK_PASSWORD_MIN = 4;
+const LINK_PASSWORD_MAX = 128;
 
 /**
  * Validates whether an ID is a valid numeric resource ID.
@@ -320,7 +324,8 @@ export async function createShareLink({
     resourceId,
     permission = "viewer",
     isAnonymousAllowed = false,
-    expiresInHours = null
+    expiresInHours = null,
+    password = null
 }) {
     if (!ownerUid) {
         throw new AppError("Unauthorized: Firebase UID is required", 401);
@@ -352,6 +357,15 @@ export async function createShareLink({
             throw new AppError("Invalid expiry duration in hours", 400);
         }
         expiresAt = new Date(Date.now() + hours * 3600 * 1000);
+    }
+
+    // Optional link password: stored only as a scrypt hash
+    let passwordHash = null;
+    if (password !== null && password !== undefined && password !== "") {
+        if (typeof password !== "string" || password.length < LINK_PASSWORD_MIN || password.length > LINK_PASSWORD_MAX) {
+            throw new AppError(`Link password must be between ${LINK_PASSWORD_MIN} and ${LINK_PASSWORD_MAX} characters`, 400);
+        }
+        passwordHash = hashPassword(password);
     }
 
     const validId = String(resourceId).trim();
@@ -386,17 +400,17 @@ export async function createShareLink({
 
     // Generate 32-byte secure random token and its SHA-256 hash
     const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const tokenHash = hashToken(rawToken);
 
     const fileId = resourceType === "file" ? validId : null;
     const folderId = resourceType === "folder" ? validId : null;
 
     const insertRes = await pool.query(
         `INSERT INTO share_links (
-            token_hash, file_id, folder_id, created_by_uid, permission, is_anonymous_allowed, expires_at, is_active
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+            token_hash, file_id, folder_id, created_by_uid, permission, is_anonymous_allowed, expires_at, is_active, password_hash
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
          RETURNING id, file_id, folder_id, created_by_uid, permission, is_anonymous_allowed, expires_at, is_active, created_at`,
-        [tokenHash, fileId, folderId, ownerUid, permission, anonymous, expiresAt]
+        [tokenHash, fileId, folderId, ownerUid, permission, anonymous, expiresAt, passwordHash]
     );
 
     const link = insertRes.rows[0];
@@ -411,6 +425,7 @@ export async function createShareLink({
             isAnonymousAllowed: link.is_anonymous_allowed,
             expiresAt: link.expires_at,
             isActive: link.is_active,
+            hasPassword: passwordHash !== null,
             createdAt: link.created_at
         },
         rawToken
@@ -638,6 +653,8 @@ export async function getSharedByMe(userUid) {
             sl.is_anonymous_allowed,
             sl.expires_at,
             sl.is_active,
+            (sl.password_hash IS NOT NULL) AS has_password,
+            sl.access_count,
             sl.created_at
          FROM share_links sl
          LEFT JOIN files f ON sl.file_id = f.id
@@ -662,40 +679,8 @@ export async function getSharedByMe(userUid) {
  * @param {string|null} [authenticatedUserUid=null] - Firebase UID if caller is logged in
  * @returns {Promise<Object>} Safe resource data and access permission
  */
-export async function resolveShareLink(rawToken, authenticatedUserUid = null) {
-    if (typeof rawToken !== "string" || !/^[0-9a-fA-F]{64}$/.test(rawToken.trim())) {
-        throw new AppError("Invalid or malformed share link token", 400);
-    }
-
-    const tokenHash = crypto.createHash("sha256").update(rawToken.trim()).digest("hex");
-
-    const linkRes = await pool.query(
-        `SELECT id, file_id, folder_id, created_by_uid, permission, is_anonymous_allowed, expires_at, is_active, created_at
-         FROM share_links
-         WHERE token_hash = $1`,
-        [tokenHash]
-    );
-
-    if (linkRes.rows.length === 0) {
-        throw new AppError("Share link not found or invalid", 404);
-    }
-
-    const link = linkRes.rows[0];
-
-    // Check revocation
-    if (!link.is_active) {
-        throw new AppError("This share link has been revoked", 410);
-    }
-
-    // Check expiration
-    if (link.expires_at && new Date(link.expires_at) < new Date()) {
-        throw new AppError("This share link has expired", 410);
-    }
-
-    // Check authentication requirement
-    if (!link.is_anonymous_allowed && !authenticatedUserUid) {
-        throw new AppError("Authentication required to access this share link", 401);
-    }
+export async function resolveShareLink(rawToken, authenticatedUserUid = null, password = null) {
+    const link = await loadActiveLink(rawToken, authenticatedUserUid, password);
 
     // Safe resource projection (NO internal storage paths exposed)
     if (link.file_id) {
@@ -714,7 +699,9 @@ export async function resolveShareLink(rawToken, authenticatedUserUid = null) {
             resource: fileRes.rows[0],
             permission: link.permission,
             isAnonymousAllowed: link.is_anonymous_allowed,
-            expiresAt: link.expires_at
+            hasPassword: Boolean(link.password_hash),
+            expiresAt: link.expires_at,
+            sharedBy: link.owner_name || null
         };
     } else if (link.folder_id) {
         const folderRes = await pool.query(
@@ -732,14 +719,178 @@ export async function resolveShareLink(rawToken, authenticatedUserUid = null) {
             resource: folderRes.rows[0],
             permission: link.permission,
             isAnonymousAllowed: link.is_anonymous_allowed,
-            expiresAt: link.expires_at
+            hasPassword: Boolean(link.password_hash),
+            expiresAt: link.expires_at,
+            sharedBy: link.owner_name || null
         };
     }
 
     throw new AppError("Invalid share link resource target", 500);
 }
 
+/**
+ * Loads a share link by its raw token and enforces every access rule:
+ * token format, existence, revocation, expiry, sign-in requirement and password.
+ * Records the access. Returns the internal link row (never send it to clients as-is).
+ *
+ * Errors carry a `code` so clients can react: PASSWORD_REQUIRED, PASSWORD_INCORRECT, SIGN_IN_REQUIRED.
+ */
+export async function loadActiveLink(rawToken, authenticatedUserUid = null, password = null) {
+    if (typeof rawToken !== "string" || !/^[0-9a-fA-F]{64}$/.test(rawToken.trim())) {
+        throw new AppError("Invalid or malformed share link token", 400);
+    }
+
+    const linkRes = await pool.query(
+        `SELECT sl.id, sl.file_id, sl.folder_id, sl.created_by_uid, sl.permission, sl.is_anonymous_allowed,
+                sl.expires_at, sl.is_active, sl.password_hash, sl.created_at, u.name AS owner_name
+         FROM share_links sl
+         LEFT JOIN users u ON u.firebase_uid = sl.created_by_uid
+         WHERE sl.token_hash = $1`,
+        [hashToken(rawToken.trim())]
+    );
+
+    if (linkRes.rows.length === 0) {
+        throw new AppError("Share link not found or invalid", 404);
+    }
+
+    const link = linkRes.rows[0];
+
+    if (!link.is_active) {
+        throw new AppError("This share link has been revoked", 410);
+    }
+
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+        throw new AppError("This share link has expired", 410);
+    }
+
+    if (!link.is_anonymous_allowed && !authenticatedUserUid) {
+        throw new AppError("Authentication required to access this share link", 401, "SIGN_IN_REQUIRED");
+    }
+
+    if (link.password_hash) {
+        if (!password) {
+            throw new AppError("This link is password protected", 401, "PASSWORD_REQUIRED");
+        }
+        if (!verifyPassword(String(password), link.password_hash)) {
+            throw new AppError("Incorrect password", 403, "PASSWORD_INCORRECT");
+        }
+    }
+
+    await pool.query(
+        "UPDATE share_links SET access_count = access_count + 1, last_accessed_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [link.id]
+    );
+
+    return link;
+}
+
+/**
+ * Changes the permission of an existing direct share. Owner only.
+ */
+export async function updateUserSharePermission({ ownerUid, resourceType, shareId, permission }) {
+    if (!ownerUid) {
+        throw new AppError("Unauthorized: Firebase UID is required", 401);
+    }
+    if (!isValidId(shareId)) {
+        throw new AppError("Invalid share ID", 400);
+    }
+    if (permission !== "viewer" && permission !== "editor") {
+        throw new AppError("Invalid permission. Must be 'viewer' or 'editor'", 400);
+    }
+
+    const table = resourceType === "file" ? "file_shares" : resourceType === "folder" ? "folder_shares" : null;
+    const resourceTable = resourceType === "file" ? "files" : "folders";
+    const fk = resourceType === "file" ? "file_id" : "folder_id";
+    if (!table) {
+        throw new AppError("Invalid resource type. Must be 'file' or 'folder'", 400);
+    }
+
+    const shareRes = await pool.query(
+        `SELECT s.id, r.owner_firebase_uid
+         FROM ${table} s JOIN ${resourceTable} r ON s.${fk} = r.id
+         WHERE s.id = $1`,
+        [String(shareId).trim()]
+    );
+    if (shareRes.rows.length === 0) {
+        throw new AppError("Share record not found", 404);
+    }
+    if (shareRes.rows[0].owner_firebase_uid !== ownerUid) {
+        throw new AppError("Forbidden: Only the resource owner can change this share", 403);
+    }
+
+    const updated = await pool.query(
+        `UPDATE ${table} SET permission = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
+         RETURNING id, ${fk} AS resource_id, shared_with_uid, permission, updated_at`,
+        [permission, String(shareId).trim()]
+    );
+    return updated.rows[0];
+}
+
+/**
+ * Lists who has access to a resource the caller owns: direct user shares and share links.
+ * Never returns token hashes or password hashes.
+ */
+export async function getResourceAccess({ ownerUid, resourceType, resourceId }) {
+    if (!ownerUid) {
+        throw new AppError("Unauthorized: Firebase UID is required", 401);
+    }
+    if (resourceType !== "file" && resourceType !== "folder") {
+        throw new AppError("Invalid resource type. Must be 'file' or 'folder'", 400);
+    }
+    if (!isValidId(resourceId)) {
+        throw new AppError("Invalid resource ID", 400);
+    }
+    const validId = String(resourceId).trim();
+    const resourceTable = resourceType === "file" ? "files" : "folders";
+    const shareTable = resourceType === "file" ? "file_shares" : "folder_shares";
+    const fk = resourceType === "file" ? "file_id" : "folder_id";
+
+    const resourceRes = await pool.query(
+        `SELECT id, name, owner_firebase_uid FROM ${resourceTable} WHERE id = $1`,
+        [validId]
+    );
+    if (resourceRes.rows.length === 0) {
+        throw new AppError(resourceType === "file" ? "File not found" : "Folder not found", 404);
+    }
+    if (resourceRes.rows[0].owner_firebase_uid !== ownerUid) {
+        throw new AppError("Forbidden: Only the owner can view who has access", 403);
+    }
+
+    const people = await pool.query(
+        `SELECT s.id AS share_id, s.permission, s.created_at AS shared_at,
+                s.shared_with_uid, COALESCE(u.name, 'Unknown') AS name, u.email
+         FROM ${shareTable} s
+         LEFT JOIN users u ON u.firebase_uid = s.shared_with_uid
+         WHERE s.${fk} = $1
+         ORDER BY s.created_at ASC`,
+        [validId]
+    );
+
+    const links = await pool.query(
+        `SELECT id AS link_id, permission, is_anonymous_allowed, expires_at, is_active,
+                (password_hash IS NOT NULL) AS has_password, access_count, last_accessed_at, created_at
+         FROM share_links
+         WHERE ${fk} = $1
+         ORDER BY created_at DESC`,
+        [validId]
+    );
+
+    return {
+        resourceType,
+        resourceId: validId,
+        resourceName: resourceRes.rows[0].name,
+        people: people.rows,
+        links: links.rows.map((l) => ({
+            ...l,
+            is_expired: Boolean(l.expires_at && new Date(l.expires_at) < new Date())
+        }))
+    };
+}
+
 export default {
+    loadActiveLink,
+    updateUserSharePermission,
+    getResourceAccess,
     resolvePermission,
     shareWithUser,
     createShareLink,

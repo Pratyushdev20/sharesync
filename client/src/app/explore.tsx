@@ -1,180 +1,299 @@
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
+import React from 'react';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  Pressable,
+  Platform,
+  RefreshControl,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import { ExternalLink } from '@/components/external-link';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Collapsible } from '@/components/ui/collapsible';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useFileExplorer } from '@/hooks/useFileExplorer';
 
-export default function TabTwoScreen() {
+import { BreadcrumbNav } from '@/components/explorer/BreadcrumbNav';
+import { ExplorerToolbar } from '@/components/explorer/ExplorerToolbar';
+import { FolderCard } from '@/components/explorer/FolderCard';
+import { FileCard } from '@/components/explorer/FileCard';
+import { EmptyState } from '@/components/explorer/EmptyState';
+
+import { CreateFolderModal } from '@/components/explorer/modals/CreateFolderModal';
+import { UploadModal } from '@/components/explorer/modals/UploadModal';
+import { RenameModal } from '@/components/explorer/modals/RenameModal';
+import { MoveModal } from '@/components/explorer/modals/MoveModal';
+import { DeleteConfirmModal } from '@/components/explorer/modals/DeleteConfirmModal';
+
+export default function FileExplorerScreen() {
   const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
   const theme = useTheme();
 
-  const contentPlatformStyle = Platform.select({
+  const explorer = useFileExplorer();
+
+  const insetsStyle = Platform.select({
     android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
+      paddingTop: safeAreaInsets.top + Spacing.two,
+      paddingBottom: safeAreaInsets.bottom + Spacing.six,
     },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
+    ios: {
+      paddingTop: safeAreaInsets.top,
+      paddingBottom: safeAreaInsets.bottom + Spacing.six,
+    },
+    default: {
+      paddingTop: Spacing.four,
+      paddingBottom: Spacing.six,
     },
   });
 
+  const itemCountText = `${explorer.folders.length} folder${explorer.folders.length === 1 ? '' : 's'}, ${explorer.files.length} file${explorer.files.length === 1 ? '' : 's'}`;
+  const isEmpty = explorer.folders.length === 0 && explorer.files.length === 0;
+
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Explore</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
-          </ThemedText>
-
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
-            </Pressable>
-          </ExternalLink>
-        </ThemedView>
-
-        <ThemedView style={styles.sectionsWrapper}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/explore.tsx</ThemedText>
+    <ThemedView style={styles.screenWrapper}>
+      <ScrollView
+        style={[styles.scrollView, { backgroundColor: theme.background }]}
+        contentContainerStyle={[styles.scrollContent, insetsStyle]}
+        showsVerticalScrollIndicator={true}
+        refreshControl={
+          <RefreshControl
+            refreshing={explorer.refreshing}
+            onRefresh={explorer.refresh}
+            tintColor="#2563eb"
+          />
+        }
+      >
+        <View style={styles.centerContainer}>
+          {/* Header Title */}
+          <View style={styles.header}>
+            <ThemedText type="subtitle" style={[styles.mainTitle, { color: theme.text }]}>
+              File Explorer
             </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
+            <ThemedText type="small" themeColor="textSecondary">
+              Organize, upload and manage your cloud files
             </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+          </View>
 
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
+          {/* Breadcrumb Navigation & Action Buttons */}
+          <BreadcrumbNav
+            breadcrumbs={explorer.breadcrumbs}
+            onSelectBreadcrumb={explorer.navigateToBreadcrumb}
+            onNavigateUp={explorer.navigateUp}
+            onNewFolder={() => explorer.setIsCreateFolderOpen(true)}
+            onUpload={() => explorer.setIsUploadModalOpen(true)}
+          />
+
+          {/* Toolbar: Search, Sort & View Mode */}
+          <ExplorerToolbar
+            searchQuery={explorer.searchQuery}
+            onSearchChange={explorer.setSearchQuery}
+            viewMode={explorer.viewMode}
+            onViewModeToggle={() =>
+              explorer.setViewMode((prev) => (prev === 'grid' ? 'list' : 'grid'))
+            }
+            sortField={explorer.sortField}
+            sortDirection={explorer.sortDirection}
+            onSortChange={(field) => {
+              if (explorer.sortField === field) {
+                explorer.setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+              } else {
+                explorer.setSortField(field);
+                explorer.setSortDirection('asc');
+              }
+            }}
+            onRefresh={explorer.refresh}
+            refreshing={explorer.refreshing}
+            itemCountText={itemCountText}
+          />
+
+          {/* Error Banner */}
+          {explorer.error && (
+            <View style={styles.errorBanner}>
+              <ThemedText style={styles.errorBannerText}>{explorer.error}</ThemedText>
+              <Pressable onPress={explorer.refresh} style={styles.retryButton}>
+                <ThemedText type="smallBold" style={{ color: '#b91c1c' }}>
+                  Retry
+                </ThemedText>
+              </Pressable>
+            </View>
+          )}
+
+          {/* Loading State */}
+          {explorer.loading && !explorer.refreshing ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#2563eb" />
+              <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: 12 }}>
+                Loading directory...
               </ThemedText>
-              <Image
-                source={require('@/assets/images/tutorial-web.png')}
-                style={styles.imageTutorial}
-              />
-            </ThemedView>
-          </Collapsible>
+            </View>
+          ) : isEmpty ? (
+            /* Empty State */
+            <EmptyState
+              isSearch={explorer.searchQuery.trim().length > 0}
+              onNewFolder={() => explorer.setIsCreateFolderOpen(true)}
+              onUpload={() => explorer.setIsUploadModalOpen(true)}
+              onClearSearch={() => explorer.setSearchQuery('')}
+            />
+          ) : (
+            /* Content Area: Folders & Files */
+            <View style={styles.contentArea}>
+              {/* Folders Section */}
+              {explorer.folders.length > 0 && (
+                <View style={styles.section}>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionHeader}>
+                    FOLDERS ({explorer.folders.length})
+                  </ThemedText>
+                  <View style={explorer.viewMode === 'grid' ? styles.gridContainer : styles.listContainer}>
+                    {explorer.folders.map((folder) => (
+                      <FolderCard
+                        key={folder.id}
+                        folder={folder}
+                        viewMode={explorer.viewMode}
+                        onOpen={explorer.navigateToFolder}
+                        onRename={(f) => explorer.setItemToRename({ type: 'folder', item: f })}
+                        onDelete={(f) => explorer.setItemToDelete({ type: 'folder', item: f })}
+                      />
+                    ))}
+                  </View>
+                </View>
+              )}
 
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/react-logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+              {/* Files Section */}
+              {explorer.files.length > 0 && (
+                <View style={styles.section}>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionHeader}>
+                    FILES ({explorer.files.length})
+                  </ThemedText>
+                  <View style={explorer.viewMode === 'grid' ? styles.gridContainer : styles.listContainer}>
+                    {explorer.files.map((file) => (
+                      <FileCard
+                        key={file.id}
+                        file={file}
+                        viewMode={explorer.viewMode}
+                        onDownload={explorer.handleDownloadFile}
+                        onRename={(f) => explorer.setItemToRename({ type: 'file', item: f })}
+                        onMove={explorer.setFileToMove}
+                        onDelete={(f) => explorer.setItemToDelete({ type: 'file', item: f })}
+                      />
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </ScrollView>
 
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+      {/* Modals */}
+      <CreateFolderModal
+        visible={explorer.isCreateFolderOpen}
+        onClose={() => explorer.setIsCreateFolderOpen(false)}
+        onSubmit={explorer.handleCreateFolder}
+      />
 
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-        {Platform.OS === 'web' && <WebBadge />}
-      </ThemedView>
-    </ScrollView>
+      <UploadModal
+        visible={explorer.isUploadModalOpen}
+        uploading={explorer.uploading}
+        uploadProgress={explorer.uploadProgress}
+        onClose={() => explorer.setIsUploadModalOpen(false)}
+        onUpload={explorer.handleUploadFile}
+      />
+
+      <RenameModal
+        item={explorer.itemToRename}
+        onClose={() => explorer.setItemToRename(null)}
+        onSubmit={explorer.handleRename}
+      />
+
+      <MoveModal
+        file={explorer.fileToMove}
+        allFolders={explorer.allFolders}
+        onLoadFolders={explorer.loadAllFolders}
+        onClose={() => explorer.setFileToMove(null)}
+        onSubmit={explorer.handleMoveFile}
+      />
+
+      <DeleteConfirmModal
+        item={explorer.itemToDelete}
+        onClose={() => explorer.setItemToDelete(null)}
+        onConfirm={explorer.handleDelete}
+      />
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
+  screenWrapper: {
+    flex: 1,
+  },
   scrollView: {
     flex: 1,
   },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
+  scrollContent: {
+    paddingHorizontal: 16,
     flexGrow: 1,
   },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
-    justifyContent: 'center',
-    gap: Spacing.one,
-    alignItems: 'center',
-  },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  collapsibleContent: {
-    alignItems: 'center',
-  },
-  imageTutorial: {
+  centerContainer: {
     width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.two,
-  },
-  imageReact: {
-    width: 100,
-    height: 100,
+    maxWidth: MaxContentWidth,
     alignSelf: 'center',
+    paddingBottom: 40,
+  },
+  header: {
+    marginBottom: 8,
+  },
+  mainTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  errorBanner: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorBannerText: {
+    color: '#991b1b',
+    flex: 1,
+    fontSize: 13,
+  },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  loadingContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contentArea: {
+    marginTop: 12,
+  },
+  section: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    fontSize: 12,
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  listContainer: {
+    flexDirection: 'column',
   },
 });

@@ -19,7 +19,7 @@ export default function LoginScreen() {
 
   const { login } = useAuth();
   const router = useRouter();
-  const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000";
+  const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:2000";
 
   async function handleLogin() {
     if (!email.trim() || !password) {

@@ -6,11 +6,13 @@ import {
   Pressable,
   ScrollView,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
 import { ExternalLink } from "@/components/external-link";
 
 export default function HomeScreen() {
   const { user, logout, getIdToken } = useAuth();
+  const router = useRouter();
   const [token, setToken] = useState<string>("");
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
 
@@ -57,6 +59,13 @@ export default function HomeScreen() {
           </Text>
         </View>
       </View>
+
+      <Pressable
+        style={styles.filesButton}
+        onPress={() => router.push("/explore")}
+      >
+        <Text style={styles.filesButtonText}>Open File Explorer →</Text>
+      </Pressable>
 
       <Pressable
         style={[styles.logoutButton, loggingOut && styles.buttonDisabled]}
@@ -134,6 +143,21 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontSize: 14,
     flexShrink: 1,
+  },
+  filesButton: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    width: "100%",
+    maxWidth: 480,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  filesButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
   },
   logoutButton: {
     backgroundColor: "#ef4444",

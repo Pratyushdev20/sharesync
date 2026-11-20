@@ -3,6 +3,7 @@ import {
   initializeAuth,
   getReactNativePersistence,
   browserLocalPersistence,
+  browserPopupRedirectResolver,
   getAuth,
   Auth,
 } from "firebase/auth";
@@ -34,6 +35,9 @@ function configureAuth(): Auth {
 
     return initializeAuth(app, {
       persistence,
+      ...(Platform.OS === "web"
+        ? { popupRedirectResolver: browserPopupRedirectResolver }
+        : {}),
     });
   } catch (_error) {
     // If initializeAuth was already called (e.g. fast refresh/HMR), get the existing instance

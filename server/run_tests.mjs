@@ -21,6 +21,7 @@ const SUITES = [
     "test_sharing_api.mjs",
     "test_phase_dh.mjs",
     "test_profile_google.mjs",
+    "test_deployment.mjs",
 ];
 
 const only = process.argv.slice(2);

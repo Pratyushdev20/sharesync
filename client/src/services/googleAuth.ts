@@ -54,6 +54,10 @@ function friendlyFirebaseError(err: any): string {
     return 'This email already has a ShareSync password account. Sign in with your email and password.';
   }
   if (code === 'auth/operation-not-allowed') return 'Google sign-in is not enabled for this ShareSync project yet.';
+  if (code === 'auth/unauthorized-domain') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this address';
+    return `Google sign-in is not allowed from "${host}" yet. Add it under Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
   if (code === 'auth/network-request-failed') return 'No connection. Check your internet and try again.';
   return err?.message || 'Google sign-in failed.';
 }

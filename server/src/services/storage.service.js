@@ -151,7 +151,9 @@ export class S3Driver {
             Key: key,
             Body: encryptedBuffer,
             ContentType: "application/octet-stream", // content is ciphertext; real type lives in the DB
-            ServerSideEncryption: process.env.S3_SSE === "false" ? undefined : "AES256",
+            // Files are already AES-256-GCM encrypted by the app. Provider-side SSE is opt-in because
+            // some S3-compatible services (e.g. Cloudflare R2) reject or ignore the header.
+            ServerSideEncryption: process.env.S3_SSE === "true" ? "AES256" : undefined,
         }));
         return `${S3_PREFIX}${key}`;
     }

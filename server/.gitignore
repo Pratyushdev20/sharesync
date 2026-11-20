@@ -149,3 +149,7 @@ uploads/
 # Database backups (contain real user data)
 backups/
 *.sql
+
+# Any environment file except the example (never commit secrets)
+.env.*
+!.env.example

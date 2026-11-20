@@ -14,13 +14,20 @@ The repository already contains the configuration: [`render.yaml`](render.yaml),
   ```
   For a fresh production database use a **new** key, not your development one.
 
-## 1. File storage — Cloudflare R2 (free up to 10 GB, no download fees)
+## 1. File storage (pick one; both are free up to 10 GB)
 
-1. Cloudflare dashboard → **R2** → **Create bucket** (e.g. `sharesync-files`). Keep it **private** (no public access).
-2. R2 → **Manage API tokens** → **Create API token** → permission *Object Read & Write*, limited to that bucket.
-3. Note: **Access Key ID**, **Secret Access Key**, and the endpoint `https://<account-id>.r2.cloudflarestorage.com`.
+Files are encrypted by ShareSync before upload, so the storage provider only ever holds ciphertext.
 
-Files are encrypted by ShareSync before upload, so R2 only ever stores ciphertext.
+**Option A: Backblaze B2 (no credit card needed)**
+1. backblaze.com → sign up → **B2 Cloud Storage** → **Create a Bucket** (e.g. `sharesync-files-<yourname>`), Files in Bucket: **Private**.
+2. Note the bucket's **Endpoint**, e.g. `s3.us-west-004.backblazeb2.com`, and its region (`us-west-004`).
+3. **Application Keys** → **Add a New Application Key** → access to that bucket only, *Read and Write*.
+4. Values: `S3_ENDPOINT=https://s3.<region>.backblazeb2.com`, `S3_REGION=<region>`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` = *keyID*, `S3_SECRET_ACCESS_KEY` = *applicationKey* (shown once).
+
+**Option B: Cloudflare R2 (asks for a payment card even on the free tier)**
+1. Cloudflare dashboard → **R2** → **Create bucket** (e.g. `sharesync-files`), private.
+2. R2 → **Manage API tokens** → **Create API token** → *Object Read & Write*, limited to that bucket.
+3. Values: `S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`, `S3_REGION=auto`, bucket, Access Key ID, Secret Access Key.
 
 ## 2. Backend + database — Render Blueprint
 
@@ -43,11 +50,12 @@ Files are encrypted by ShareSync before upload, so R2 only ever stores ciphertex
 
 **Custom domain:** service → Settings → Custom Domains → add `api.yourdomain.com` and the DNS record shown. HTTPS is automatic; live sync (WebSockets) works on it.
 
-### Plan notes
-- `starter` web plan and a paid database are set in `render.yaml`: pre-deploy migrations and no idle sleep need a paid web plan; paid databases have daily backups (free ones expire).
+### Plan notes (render.yaml is set up for the FREE plan)
+- The Blueprint also creates **`sharesync-web`**, the web app as a free static site (built from `client/`, all paths served by `index.html`).
+- Free API: sleeps after ~15 min idle (first request then takes ~1 min); migrations run at start (`npm run start:migrate`).
+- **Free PostgreSQL expires after 30 days.** Upgrade the database (and ideally the API) before real users depend on it; then switch the API to `plan: starter`, `preDeployCommand: npm run migrate`, `startCommand: npm start`.
 - Keep **one instance** (`numInstances: 1`). Rate limits and real-time rooms live in memory; scaling out needs Redis first.
-- `UPLOAD_CONCURRENCY=3` caps simultaneous uploads (each is buffered in RAM). Raise it on bigger instances.
-- On the free plan instead: remove `preDeployCommand`, set the start command to `npm run start:migrate`, and accept idle sleep.
+- `UPLOAD_CONCURRENCY=2` caps simultaneous uploads on the 512 MB free instance.
 
 ## 3. Firebase (production)
 
@@ -57,14 +65,12 @@ Files are encrypted by ShareSync before upload, so R2 only ever stores ciphertex
 
 ## 4. Web app
 
-```bash
-cd client
-cp .env.production.example .env.production   # fill in; this file is git-ignored
-npx expo export --platform web               # output: client/dist
-```
-Host `client/dist` on Vercel / Netlify / Cloudflare Pages / Render Static Site.
-Configure the host to serve `index.html` for unknown paths (SPA fallback) so links like `/s/<token>` work.
-Then make sure that exact origin is in the API's `CORS_ORIGINS`.
+Created by the Blueprint as **`sharesync-web`** (Render static site). Its `EXPO_PUBLIC_*` variables are baked in at build time,
+so after changing any of them use **Manual Deploy → Clear build cache & deploy**.
+Its address must be in the API's `CORS_ORIGINS`, and the API's address in `EXPO_PUBLIC_API_URL`.
+
+To host elsewhere instead: fill `client/.env.production` (from the example), run `npx expo export --platform web`,
+upload `client/dist`, and configure a rewrite of every path to `/index.html`.
 
 ## 5. Mobile apps (EAS)
 

@@ -164,8 +164,10 @@ console.log("\nTEST 4: S3 provider-side encryption header is opt-in");
 console.log("\nTEST 5: Deployment files");
 {
     const yaml = fs.readFileSync("../render.yaml", "utf8");
-    assert(/rootDir:\s*server/.test(yaml) && /startCommand:\s*npm start/.test(yaml), "render.yaml points at server/ with npm start");
-    assert(/preDeployCommand:\s*npm run migrate/.test(yaml), "Migrations run before each deploy");
+    assert(/rootDir:\s*server/.test(yaml) && /startCommand:\s*npm (start|run start:migrate)/.test(yaml), "render.yaml points at server/ with a start command");
+    assert(/preDeployCommand:\s*npm run migrate/.test(yaml) || /startCommand:\s*npm run start:migrate/.test(yaml),
+        "Migrations run on every deploy (pre-deploy on paid plans, at start on the free plan)");
+    assert(/runtime:\s*static/.test(yaml) && /destination:\s*\/index\.html/.test(yaml), "Web app served as a single-page app (all paths -> index.html)");
     assert(/healthCheckPath:\s*\/api\/health/.test(yaml), "Health check configured");
     assert(/numInstances:\s*1/.test(yaml), "Single instance (in-memory rate limits / realtime rooms)");
     const secretKeys = ["FIREBASE_PRIVATE_KEY", "FILE_ENCRYPTION_KEY", "S3_SECRET_ACCESS_KEY", "S3_ACCESS_KEY_ID", "FIREBASE_CLIENT_EMAIL"];

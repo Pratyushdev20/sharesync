@@ -58,16 +58,7 @@ router.patch(
 // Push tokens (mobile push delivery; optional, see PUSH_ENABLED).
 // Registered BEFORE "DELETE /:id" so "/push-tokens" is never treated as a notification id.
 router.post("/push-tokens", validate({ body: pushBody }), wrap((req) => registerPushToken(req.user.uid, req.body.token, req.body.platform)));
-router.delete(
-    ["/push-tokens", "/push-tokens/:token"],
-    (req, res, next) => {
-        const token = req.params?.token || req.body?.token || req.query?.token;
-        if (token) req.body = { token };
-        next();
-    },
-    validate({ body: z.object({ token: z.string().max(255) }).strict() }),
-    wrap((req) => unregisterPushToken(req.user.uid, req.body.token))
-);
+router.delete("/push-tokens", validate({ body: z.object({ token: z.string().max(255) }).strict() }), wrap((req) => unregisterPushToken(req.user.uid, req.body.token)));
 
 // DELETE /api/notifications/:id
 router.delete("/:id", validate({ params: z.object({ id }) }), wrap((req) => deleteNotification(req.user.uid, req.params.id)));

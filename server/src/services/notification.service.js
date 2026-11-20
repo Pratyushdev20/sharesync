@@ -50,36 +50,15 @@ const expoPushTransport = {
             }
         }
         for (let i = 0; i < messages.length; i += 100) {
-            const batch = messages.slice(i, i + 100);
-            try {
-                const res = await fetch("https://exp.host/--/api/v2/push/send", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        ...(env.expoAccessToken ? { Authorization: `Bearer ${env.expoAccessToken}` } : {}),
-                    },
-                    body: JSON.stringify(batch),
-                });
-                if (!res.ok) {
-                    log.warn("push.send_failed", { status: res.status });
-                    continue;
-                }
-                const result = await res.json();
-                if (Array.isArray(result?.data)) {
-                    for (let j = 0; j < result.data.length; j++) {
-                        const ticket = result.data[j];
-                        if (ticket?.status === "error" && ticket?.details?.error === "DeviceNotRegistered") {
-                            const deadToken = batch[j]?.to;
-                            if (deadToken) {
-                                log.info("push.token_pruned", { token: deadToken });
-                                await pool.query("DELETE FROM push_tokens WHERE token = $1", [deadToken]).catch(() => {});
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                log.warn("push.deliver_exception", { err });
-            }
+            const res = await fetch("https://exp.host/--/api/v2/push/send", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(env.expoAccessToken ? { Authorization: `Bearer ${env.expoAccessToken}` } : {}),
+                },
+                body: JSON.stringify(messages.slice(i, i + 100)),
+            });
+            if (!res.ok) log.warn("push.send_failed", { status: res.status });
         }
     },
 };

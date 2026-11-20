@@ -34,18 +34,4 @@ export const notificationService = {
     const res = await apiRequest<{ unreadCount: number }>(`/api/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
     return res.data?.unreadCount ?? 0;
   },
-  async registerPushToken(token: string, platform?: string): Promise<{ registered: boolean; pushEnabled: boolean }> {
-    const res = await apiRequest<{ registered: boolean; pushEnabled: boolean }>('/api/notifications/push-tokens', {
-      method: 'POST',
-      body: JSON.stringify({ token, platform }),
-    });
-    return res.data || { registered: false, pushEnabled: false };
-  },
-  async unregisterPushToken(token: string): Promise<{ removed: boolean }> {
-    const res = await apiRequest<{ removed: boolean }>('/api/notifications/push-tokens', {
-      method: 'DELETE',
-      body: JSON.stringify({ token }),
-    });
-    return res.data || { removed: false };
-  },
 };

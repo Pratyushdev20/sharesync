@@ -20,7 +20,6 @@ const SUITES = [
     "test_sharing_services.mjs",
     "test_sharing_api.mjs",
     "test_phase_dh.mjs",
-    "test_push_notifications.mjs",
     "test_profile_google.mjs",
 ];
 

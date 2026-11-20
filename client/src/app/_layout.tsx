@@ -6,11 +6,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { SyncTasks } from '@/components/SyncTasks';
-import {
-  registerForPushNotificationsAsync,
-  setupPushNotificationListeners,
-  checkInitialNotificationResponse,
-} from '@/services/pushNotification.service';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { Colors } from '@/constants/theme';
@@ -82,30 +77,6 @@ function NavigationGuard() {
   );
 }
 
-function NativePushController() {
-  const { user } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!user) return;
-
-    // 1. Register push token for current authenticated user
-    registerForPushNotificationsAsync(user.uid);
-
-    // 2. Set up foreground notification and tap response listeners
-    const cleanupListeners = setupPushNotificationListeners(router);
-
-    // 3. Handle cold-start launch from a notification tap
-    checkInitialNotificationResponse(router);
-
-    return () => {
-      cleanupListeners();
-    };
-  }, [user, router]);
-
-  return null;
-}
-
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
@@ -113,7 +84,6 @@ export default function RootLayout() {
     <AuthProvider>
       <SyncProvider>
         <SyncTasks />
-        <NativePushController />
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <NavigationGuard />
         </ThemeProvider>

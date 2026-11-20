@@ -33,14 +33,7 @@
           "imageWidth": 76
         }
       ],
-      "expo-sharing",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/icon.png",
-          "color": "#208AEF"
-        }
-      ]
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
